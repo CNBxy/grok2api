@@ -17,19 +17,42 @@ from app.control.model.enums import ModeId
 from app.control.model.registry import resolve as resolve_model
 from app.control.account.enums import FeedbackKind
 from app.dataplane.reverse.protocol.xai_chat import classify_line, StreamAdapter
+from app.dataplane.reverse.protocol.xai_console import (
+    build_console_input,
+    convert_openai_tool_choice,
+    convert_openai_tools_to_console,
+    extract_console_usage,
+    inject_web_search_tool,
+)
 from app.products._account_selection import reserve_account, selection_max_retries
 
-from .chat import _stream_chat, _extract_message, _resolve_image, _quota_sync, _fail_sync, _parse_retry_codes, _feedback_kind, _log_task_exception, _upstream_body_excerpt
+from .chat import (
+    _stream_chat,
+    _extract_message,
+    _resolve_image,
+    _quota_sync,
+    _fail_sync,
+    _parse_retry_codes,
+    _feedback_kind,
+    _log_task_exception,
+    _upstream_body_excerpt,
+    _console_post,
+)
 from .chat import _configured_retry_codes, _should_retry_upstream
 from ._format import (
-    make_resp_id, build_resp_usage, make_resp_object, format_sse,
+    make_resp_id,
+    build_resp_usage,
+    make_resp_object,
+    format_sse,
 )
 from app.dataplane.reverse.protocol.tool_prompt import (
-    build_tool_system_prompt, extract_tool_names, inject_into_message, tool_calls_to_xml,
+    build_tool_system_prompt,
+    extract_tool_names,
+    inject_into_message,
+    tool_calls_to_xml,
 )
 from app.dataplane.reverse.protocol.tool_parser import parse_tool_calls
 from ._tool_sieve import ToolSieve
-
 
 from ._codex_tools import (
     _PATCH_COMPLETED_RE,
@@ -141,6 +164,7 @@ async def _repair_tool_calls(
 # Tool call helpers (Responses API format)
 # ---------------------------------------------------------------------------
 
+
 def _build_fc_items(calls: list) -> list[dict]:
     """Allocate stable IDs and build function_call output items for response.completed."""
     return [
@@ -151,8 +175,7 @@ def _build_fc_items(calls: list) -> list[dict]:
             "name":      tc.name,
             "arguments": tc.arguments,
             "status":    "completed",
-        }
-        for tc in calls
+        } for tc in calls
     ]
 
 
@@ -165,7 +188,8 @@ async def _emit_fc_events(items: list[dict], base_idx: int):
     for i, item in enumerate(items):
         out_idx    = base_idx + i
         fc_item_id = item["id"]
-        yield format_sse("response.output_item.added", {
+        yield format_sse(
+            "response.output_item.added", {
             "type":         "response.output_item.added",
             "output_index": out_idx,
             "item": {
@@ -177,19 +201,22 @@ async def _emit_fc_events(items: list[dict], base_idx: int):
                 "status":    "in_progress",
             },
         })
-        yield format_sse("response.function_call_arguments.delta", {
+        yield format_sse(
+            "response.function_call_arguments.delta", {
             "type":         "response.function_call_arguments.delta",
             "item_id":      fc_item_id,
             "output_index": out_idx,
             "delta":        item["arguments"],
         })
-        yield format_sse("response.function_call_arguments.done", {
+        yield format_sse(
+            "response.function_call_arguments.done", {
             "type":         "response.function_call_arguments.done",
             "item_id":      fc_item_id,
             "output_index": out_idx,
             "arguments":    item["arguments"],
         })
-        yield format_sse("response.output_item.done", {
+        yield format_sse(
+            "response.output_item.done", {
             "type":         "response.output_item.done",
             "output_index": out_idx,
             "item":         item,
@@ -213,6 +240,7 @@ async def _emit_response_start(response_id: str, model: str):
 # Input normalisation
 # ---------------------------------------------------------------------------
 
+
 def _parse_input(input_val: str | list) -> list[dict]:
     """Convert Responses API input to our internal messages list.
 
@@ -234,14 +262,20 @@ def _parse_input(input_val: str | list) -> list[dict]:
             call_id = item.get("call_id", "")
             name    = item.get("name", "")
             args    = item.get("arguments", "{}")
-            messages.append({
+            messages.append(
+                {
                 "role":    "assistant",
                 "content": None,
-                "tool_calls": [{
+                    "tool_calls": [
+                        {
                     "id":   call_id,
                     "type": "function",
-                    "function": {"name": name, "arguments": args},
-                }],
+                            "function": {
+                                "name": name,
+                                "arguments": args
+                            },
+                        }
+                    ],
             })
             continue
 
@@ -292,8 +326,269 @@ def _parse_input(input_val: str | list) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Console API dispatch (console.x.ai/v1/responses)
+# ---------------------------------------------------------------------------
+
+
+async def _console_responses_dispatch(
+    *,
+    spec,
+    model: str,
+    messages: list[dict],
+    stream: bool,
+    temperature: float,
+    top_p: float,
+    tools: list[dict] | None,
+    tool_choice: Any,
+) -> dict | AsyncGenerator[str, None]:
+    """Dispatch a /v1/responses request through console.x.ai.
+
+    Console.x.ai natively returns OpenAI Responses API format, so for
+    streaming we relay upstream SSE events directly (with reconstruction
+    of event/data block boundaries) and for non-streaming we return the
+    upstream JSON object as-is.
+    """
+    cfg = get_config()
+    console_model = spec.console_model
+
+    # Convert our internal messages list → console structured input
+    input_array, sys_instructions = build_console_input(messages)
+    if not input_array and not sys_instructions:
+        raise UpstreamError("Empty messages after conversion", status=400)
+
+    # Tools may arrive in either Chat Completions wrapper format or
+    # Responses API flat format; convert_openai_tools_to_console handles both.
+    console_tools = convert_openai_tools_to_console(tools) if tools else None
+    console_tool_choice = (
+        convert_openai_tool_choice(tool_choice) if console_tools and tool_choice is not None else None)
+
+    # Always enable web search for console models — primary reason for
+    # using the console route. The upstream emits web_search_call output
+    # items which are relayed downstream so clients can see citation URLs.
+    console_tools = inject_web_search_tool(console_tools)
+
+    from app.dataplane.account import _directory as _acct_dir
+    if _acct_dir is None:
+        raise RateLimitError("Account directory not initialised")
+    directory = _acct_dir
+
+    max_retries = selection_max_retries()
+    retry_codes = _configured_retry_codes(cfg)
+    timeout_s = cfg.get_float("chat.timeout", 120.0)
+
+    # ── Streaming ────────────────────────────────────────────────────────────
+    if stream:
+
+        async def _run_stream() -> AsyncGenerator[str, None]:
+            excluded: list[str] = []
+            for attempt in range(max_retries + 1):
+                acct, selected_mode_id = await reserve_account(
+                    directory,
+                    spec,
+                    now_s_override=now_s(),
+                    exclude_tokens=excluded or None,
+                )
+                if acct is None:
+                    raise RateLimitError("No available accounts for this model tier")
+
+                token = acct.token
+                success = False
+                _retry = False
+                fail_exc: BaseException | None = None
+
+                try:
+                    try:
+                        session, response = await _console_post(
+                            token=token,
+                            console_model=console_model,
+                            input=input_array,
+                            instructions=sys_instructions,
+                            stream=True,
+                            temperature=temperature,
+                            top_p=top_p,
+                            tools=console_tools,
+                            tool_choice=console_tool_choice,
+                            timeout_s=timeout_s,
+                        )
+                        try:
+                            # Relay upstream SSE events. Upstream uses
+                            # OpenAI Responses API format natively, so we
+                            # reconstruct event/data blocks and forward.
+                            current_event = ""
+                            async for raw_line in response.aiter_lines():
+                                if isinstance(raw_line, bytes):
+                                    raw_line = raw_line.decode("utf-8", "replace")
+                                raw_line = raw_line.rstrip("\r")
+                                if not raw_line:
+                                    continue
+                                if raw_line.startswith("event:"):
+                                    current_event = raw_line[6:].strip()
+                                    continue
+                                if raw_line.startswith("data:"):
+                                    data = raw_line[5:].strip()
+                                    if data == "[DONE]":
+                                        break
+                                    if current_event:
+                                        yield f"event: {current_event}\ndata: {data}\n\n"
+                                    else:
+                                        yield f"data: {data}\n\n"
+                                    current_event = ""
+                        finally:
+                            await session.__aexit__(None, None, None)
+
+                        yield "data: [DONE]\n\n"
+                        success = True
+                        logger.info(
+                            "console responses stream completed: attempt={}/{} model={}",
+                            attempt + 1,
+                            max_retries + 1,
+                            model,
+                        )
+
+                    except UpstreamError as exc:
+                        fail_exc = exc
+                        if _should_retry_upstream(exc, retry_codes) and attempt < max_retries:
+                            _retry = True
+                            logger.warning(
+                                "console responses stream retry: attempt={}/{} status={} token={}...",
+                                attempt + 1,
+                                max_retries,
+                                exc.status,
+                                token[:8],
+                            )
+                        else:
+                            logger.warning(
+                                "console responses stream failed: attempt={}/{} model={} status={} body={}",
+                                attempt + 1,
+                                max_retries + 1,
+                                model,
+                                exc.status,
+                                _upstream_body_excerpt(exc),
+                            )
+                            raise
+
+                finally:
+                    await directory.release(acct)
+                    kind = (
+                        FeedbackKind.SUCCESS
+                        if success else _feedback_kind(fail_exc) if fail_exc else FeedbackKind.SERVER_ERROR)
+                    await directory.feedback(token, kind, selected_mode_id, now_s_val=now_s())
+                    if success:
+                        asyncio.create_task(_quota_sync(
+                            token, selected_mode_id)).add_done_callback(_log_task_exception)
+                    else:
+                        asyncio.create_task(_fail_sync(token, selected_mode_id,
+                                                       fail_exc)).add_done_callback(_log_task_exception)
+
+                if success or not _retry:
+                    return
+                excluded.append(token)
+
+        return _run_stream()
+
+    # ── Non-streaming ────────────────────────────────────────────────────────
+    excluded: list[str] = []
+    response_json: dict[str, Any] | None = None
+    for attempt in range(max_retries + 1):
+        acct, selected_mode_id = await reserve_account(
+            directory,
+            spec,
+            now_s_override=now_s(),
+            exclude_tokens=excluded or None,
+        )
+        if acct is None:
+            raise RateLimitError("No available accounts for this model tier")
+
+        token = acct.token
+        success = False
+        _retry = False
+        fail_exc: BaseException | None = None
+
+        try:
+            try:
+                session, response = await _console_post(
+                    token=token,
+                    console_model=console_model,
+                    input=input_array,
+                    instructions=sys_instructions,
+                    stream=False,
+                    temperature=temperature,
+                    top_p=top_p,
+                    tools=console_tools,
+                    tool_choice=console_tool_choice,
+                    timeout_s=timeout_s,
+                )
+                try:
+                    body_bytes = response.content
+                    if hasattr(body_bytes, "__await__"):
+                        body_bytes = await body_bytes  # type: ignore[misc]
+                finally:
+                    await session.__aexit__(None, None, None)
+
+                try:
+                    response_json = orjson.loads(body_bytes)
+                except (orjson.JSONDecodeError, ValueError, TypeError) as exc:
+                    raise UpstreamError(
+                        f"Console returned non-JSON body: {exc}",
+                        status=502,
+                        body=str(body_bytes)[:400],
+                    ) from exc
+                success = True
+
+            except UpstreamError as exc:
+                fail_exc = exc
+                if _should_retry_upstream(exc, retry_codes) and attempt < max_retries:
+                    _retry = True
+                    logger.warning(
+                        "console responses retry: attempt={}/{} status={} token={}...",
+                        attempt + 1,
+                        max_retries,
+                        exc.status,
+                        token[:8],
+                    )
+                else:
+                    logger.warning(
+                        "console responses failed: attempt={}/{} model={} status={} body={}",
+                        attempt + 1,
+                        max_retries + 1,
+                        model,
+                        exc.status,
+                        _upstream_body_excerpt(exc),
+                    )
+                    raise
+
+        finally:
+            await directory.release(acct)
+            kind = (
+                FeedbackKind.SUCCESS
+                if success else _feedback_kind(fail_exc) if fail_exc else FeedbackKind.SERVER_ERROR)
+            await directory.feedback(token, kind, selected_mode_id, now_s_val=now_s())
+            if success:
+                asyncio.create_task(_quota_sync(token, selected_mode_id)).add_done_callback(_log_task_exception)
+            else:
+                asyncio.create_task(_fail_sync(token, selected_mode_id,
+                                               fail_exc)).add_done_callback(_log_task_exception)
+
+        if success or not _retry:
+            break
+        excluded.append(token)
+
+    if not response_json:
+        raise UpstreamError("Console returned empty response", status=502)
+
+    logger.info(
+        "console responses request completed: model={} status={} usage={}",
+        model,
+        response_json.get("status"),
+        extract_console_usage(response_json),
+    )
+    return response_json
+
+
+# ---------------------------------------------------------------------------
 # Main handler
 # ---------------------------------------------------------------------------
+
 
 async def create(
     *,
@@ -316,6 +611,28 @@ async def create(
     if instructions:
         messages.append({"role": "system", "content": instructions})
     messages.extend(_parse_input(input_val))
+
+    # ── Console API dispatch ─────────────────────────────────────────────────
+    # Models with `console_model` set route through console.x.ai/v1/responses
+    # (OpenAI Responses API native), supporting all models for basic-tier
+    # accounts via SSO cookies.
+    if spec.is_console():
+        logger.info(
+            "console responses dispatch: model={} stream={} message_count={}",
+            model,
+            stream,
+            len(messages),
+        )
+        return await _console_responses_dispatch(
+            spec=spec,
+            model=model,
+            messages=messages,
+            stream=stream,
+            temperature=temperature,
+            top_p=top_p,
+            tools=tools,
+            tool_choice=tool_choice,
+        )
 
     message, files = _extract_message(messages)
     if not message.strip():
@@ -551,23 +868,31 @@ async def create(
                             if ev.kind == "thinking" and emit_think and not reasoning_closed:
                                 if not reasoning_started:
                                     reasoning_started = True
-                                    yield format_sse("response.output_item.added", {
+                                    yield format_sse(
+                                        "response.output_item.added", {
                                         "type":         "response.output_item.added",
                                         "output_index": 0,
                                         "item":         {
-                                            "id": reasoning_id, "type": "reasoning",
-                                            "summary": [], "status": "in_progress",
+                                                "id": reasoning_id,
+                                                "type": "reasoning",
+                                                "summary": [],
+                                                "status": "in_progress",
                                         },
                                     })
-                                    yield format_sse("response.reasoning_summary_part.added", {
+                                    yield format_sse(
+                                        "response.reasoning_summary_part.added", {
                                         "type":          "response.reasoning_summary_part.added",
                                         "item_id":       reasoning_id,
                                         "output_index":  0,
                                         "summary_index": 0,
-                                        "part":          {"type": "summary_text", "text": ""},
+                                            "part": {
+                                                "type": "summary_text",
+                                                "text": ""
+                                            },
                                     })
                                 think_buf.append(ev.content)
-                                yield format_sse("response.reasoning_summary_text.delta", {
+                                yield format_sse(
+                                    "response.reasoning_summary_text.delta", {
                                     "type":          "response.reasoning_summary_text.delta",
                                     "item_id":       reasoning_id,
                                     "output_index":  0,
@@ -579,27 +904,36 @@ async def create(
                                 if reasoning_started and not reasoning_closed:
                                     reasoning_closed = True
                                     full_think = "".join(think_buf)
-                                    yield format_sse("response.reasoning_summary_text.done", {
+                                    yield format_sse(
+                                        "response.reasoning_summary_text.done", {
                                         "type":          "response.reasoning_summary_text.done",
                                         "item_id":       reasoning_id,
                                         "output_index":  0,
                                         "summary_index": 0,
                                         "text":          full_think,
                                     })
-                                    yield format_sse("response.reasoning_summary_part.done", {
+                                    yield format_sse(
+                                        "response.reasoning_summary_part.done", {
                                         "type":          "response.reasoning_summary_part.done",
                                         "item_id":       reasoning_id,
                                         "output_index":  0,
                                         "summary_index": 0,
-                                        "part":          {"type": "summary_text", "text": full_think},
+                                            "part": {
+                                                "type": "summary_text",
+                                                "text": full_think
+                                            },
                                     })
-                                    yield format_sse("response.output_item.done", {
+                                    yield format_sse(
+                                        "response.output_item.done", {
                                         "type":         "response.output_item.done",
                                         "output_index": 0,
                                         "item":         {
                                             "id":      reasoning_id,
                                             "type":    "reasoning",
-                                            "summary": [{"type": "summary_text", "text": full_think}],
+                                                "summary": [{
+                                                    "type": "summary_text",
+                                                    "text": full_think
+                                                }],
                                             "status":  "completed",
                                         },
                                     })
@@ -624,24 +958,34 @@ async def create(
                                     msg_idx = 1 if reasoning_started else 0
                                     if not message_started:
                                         message_started = True
-                                        yield format_sse("response.output_item.added", {
+                                        yield format_sse(
+                                            "response.output_item.added", {
                                             "type":         "response.output_item.added",
                                             "output_index": msg_idx,
                                             "item":         {
-                                                "id": message_id, "type": "message",
-                                                "role": "assistant", "content": [], "status": "in_progress",
+                                                    "id": message_id,
+                                                    "type": "message",
+                                                    "role": "assistant",
+                                                    "content": [],
+                                                    "status": "in_progress",
                                             },
                                         })
-                                        yield format_sse("response.content_part.added", {
+                                        yield format_sse(
+                                            "response.content_part.added", {
                                             "type":          "response.content_part.added",
                                             "item_id":       message_id,
                                             "output_index":  msg_idx,
                                             "content_index": 0,
-                                            "part":          {"type": "output_text", "text": "", "annotations": []},
+                                                "part": {
+                                                    "type": "output_text",
+                                                    "text": "",
+                                                    "annotations": []
+                                                },
                                         })
 
                                     text_buf.append(text_chunk)
-                                    yield format_sse("response.output_text.delta", {
+                                    yield format_sse(
+                                        "response.output_text.delta", {
                                         "type":          "response.output_text.delta",
                                         "item_id":       message_id,
                                         "output_index":  msg_idx,
@@ -653,7 +997,8 @@ async def create(
                                 if message_started:
                                     collected_annotations.append(ev.annotation_data)
                                     msg_idx = 1 if reasoning_started else 0
-                                    yield format_sse("response.output_text.annotation.added", {
+                                    yield format_sse(
+                                        "response.output_text.annotation.added", {
                                         "type":             "response.output_text.annotation.added",
                                         "item_id":          message_id,
                                         "output_index":     msg_idx,
@@ -685,27 +1030,36 @@ async def create(
                         full_think = "".join(think_buf)
                         output: list[dict] = []
                         if reasoning_started and full_think:
-                            output.append({
+                            output.append(
+                                {
                                 "id":      reasoning_id,
                                 "type":    "reasoning",
-                                "summary": [{"type": "summary_text", "text": full_think}],
+                                    "summary": [{
+                                        "type": "summary_text",
+                                        "text": full_think
+                                    }],
                                 "status":  "completed",
                             })
                         output.extend(detected_fc_items)
                         pt = estimate_prompt_tokens(message)
                         ct = estimate_tool_call_tokens(detected_fc_items)
                         rt = estimate_tokens(full_think) if full_think else 0
-                        yield format_sse("response.completed", {
+                        yield format_sse(
+                            "response.completed", {
                             "type":     "response.completed",
                             "response": make_resp_object(
-                                response_id, model, "completed", output,
+                                    response_id,
+                                    model,
+                                    "completed",
+                                    output,
                                 build_resp_usage(pt, ct + rt, rt),
                             ),
                         })
                         yield "data: [DONE]\n\n"
                         success = True
-                        logger.info("responses stream tool_calls: attempt={}/{} model={}",
-                                    attempt + 1, max_retries + 1, model)
+                        logger.info(
+                            "responses stream tool_calls: attempt={}/{} model={}", attempt + 1, max_retries + 1,
+                            model)
                     else:
                         # Normal text path
                         msg_idx = 1 if reasoning_started else 0
@@ -714,7 +1068,8 @@ async def create(
                             img_md   = img_text + "\n"
                             text_buf.append(img_md)
                             if message_started:
-                                yield format_sse("response.output_text.delta", {
+                                yield format_sse(
+                                    "response.output_text.delta", {
                                     "type":          "response.output_text.delta",
                                     "item_id":       message_id,
                                     "output_index":  msg_idx,
@@ -726,7 +1081,8 @@ async def create(
                         if references:
                             text_buf.append(references)
                             if message_started:
-                                yield format_sse("response.output_text.delta", {
+                                yield format_sse(
+                                    "response.output_text.delta", {
                                     "type":          "response.output_text.delta",
                                     "item_id":       message_id,
                                     "output_index":  msg_idx,
@@ -736,19 +1092,25 @@ async def create(
 
                         full_text = "".join(text_buf)
                         if message_started:
-                            yield format_sse("response.output_text.done", {
+                            yield format_sse(
+                                "response.output_text.done", {
                                 "type":          "response.output_text.done",
                                 "item_id":       message_id,
                                 "output_index":  msg_idx,
                                 "content_index": 0,
                                 "text":          full_text,
                             })
-                            yield format_sse("response.content_part.done", {
+                            yield format_sse(
+                                "response.content_part.done", {
                                 "type":          "response.content_part.done",
                                 "item_id":       message_id,
                                 "output_index":  msg_idx,
                                 "content_index": 0,
-                                "part":          {"type": "output_text", "text": full_text, "annotations": collected_annotations},
+                                    "part": {
+                                        "type": "output_text",
+                                        "text": full_text,
+                                        "annotations": collected_annotations
+                                    },
                             })
                             # 构建 message item（流式 output_item.done + response.completed 共用）
                             sources = adapter.search_sources_list()
@@ -756,12 +1118,19 @@ async def create(
                                 "id":      message_id,
                                 "type":    "message",
                                 "role":    "assistant",
-                                "content": [{"type": "output_text", "text": full_text, "annotations": collected_annotations}],
+                                "content": [
+                                    {
+                                        "type": "output_text",
+                                        "text": full_text,
+                                        "annotations": collected_annotations
+                                    }
+                                ],
                                 "status":  "completed",
                             }
                             if sources:
                                 msg_item["search_sources"] = sources
-                            yield format_sse("response.output_item.done", {
+                            yield format_sse(
+                                "response.output_item.done", {
                                 "type":         "response.output_item.done",
                                 "output_index": msg_idx,
                                 "item":         msg_item,
@@ -770,10 +1139,14 @@ async def create(
                         full_think = "".join(think_buf)
                         output = []
                         if reasoning_started and full_think:
-                            output.append({
+                            output.append(
+                                {
                                 "id":      reasoning_id,
                                 "type":    "reasoning",
-                                "summary": [{"type": "summary_text", "text": full_think}],
+                                    "summary": [{
+                                        "type": "summary_text",
+                                        "text": full_think
+                                    }],
                                 "status":  "completed",
                             })
                         # 复用 msg_item（message_started 时已构建）；未启动时重新构建
@@ -782,7 +1155,13 @@ async def create(
                                 "id":      message_id,
                                 "type":    "message",
                                 "role":    "assistant",
-                                "content": [{"type": "output_text", "text": full_text, "annotations": adapter.annotations_list()}],
+                                "content": [
+                                    {
+                                        "type": "output_text",
+                                        "text": full_text,
+                                        "annotations": adapter.annotations_list()
+                                    }
+                                ],
                                 "status":  "completed",
                             }
                             sources = adapter.search_sources_list()
@@ -793,25 +1172,31 @@ async def create(
                         pt  = estimate_prompt_tokens(message)
                         ct  = estimate_tokens(full_text)
                         rt  = estimate_tokens(full_think) if full_think else 0
-                        yield format_sse("response.completed", {
+                        yield format_sse(
+                            "response.completed", {
                             "type":     "response.completed",
                             "response": make_resp_object(
-                                response_id, model, "completed", output,
+                                    response_id,
+                                    model,
+                                    "completed",
+                                    output,
                                 build_resp_usage(pt, ct + rt, rt),
                             ),
                         })
                         yield "data: [DONE]\n\n"
                         success = True
-                        logger.info("responses stream completed: attempt={}/{} model={} text_len={} reasoning_len={} image_count={}",
-                                    attempt + 1, max_retries + 1, model,
-                                    len(full_text), len(full_think), len(adapter.image_urls))
+                        logger.info(
+                            "responses stream completed: attempt={}/{} model={} text_len={} reasoning_len={} image_count={}",
+                            attempt + 1, max_retries + 1, model, len(full_text), len(full_think),
+                            len(adapter.image_urls))
 
                 except UpstreamError as exc:
                     fail_exc = exc
                     if _should_retry_upstream(exc, retry_codes) and attempt < max_retries:
                         _retry = True
-                        logger.warning("responses stream retry scheduled: attempt={}/{} status={} token={}...",
-                                       attempt + 1, max_retries, exc.status, token[:8])
+                        logger.warning(
+                            "responses stream retry scheduled: attempt={}/{} status={} token={}...", attempt + 1,
+                            max_retries, exc.status, token[:8])
                     else:
                         logger.warning(
                             "responses stream upstream failed: attempt={}/{} model={} status={} body={}",
@@ -825,12 +1210,15 @@ async def create(
 
             finally:
                 await directory.release(acct)
-                kind = FeedbackKind.SUCCESS if success else _feedback_kind(fail_exc) if fail_exc else FeedbackKind.SERVER_ERROR
+                kind = FeedbackKind.SUCCESS if success else _feedback_kind(
+                    fail_exc) if fail_exc else FeedbackKind.SERVER_ERROR
                 await directory.feedback(token, kind, selected_mode_id, now_s_val=now_s())
                 if success:
-                    asyncio.create_task(_quota_sync(token, selected_mode_id)).add_done_callback(_log_task_exception)
+                    asyncio.create_task(_quota_sync(token,
+                                                    selected_mode_id)).add_done_callback(_log_task_exception)
                 else:
-                    asyncio.create_task(_fail_sync(token, selected_mode_id, fail_exc)).add_done_callback(_log_task_exception)
+                    asyncio.create_task(_fail_sync(token, selected_mode_id,
+                                                   fail_exc)).add_done_callback(_log_task_exception)
 
             if success or not _retry:
                 return
@@ -903,8 +1291,9 @@ async def create(
                 fail_exc = exc
                 if _should_retry_upstream(exc, retry_codes) and attempt < max_retries:
                     _retry = True
-                    logger.warning("responses retry scheduled: attempt={}/{} status={} token={}...",
-                                   attempt + 1, max_retries, exc.status, token[:8])
+                    logger.warning(
+                        "responses retry scheduled: attempt={}/{} status={} token={}...", attempt + 1,
+                        max_retries, exc.status, token[:8])
                 else:
                     logger.warning(
                         "responses upstream failed: attempt={}/{} model={} status={} body={}",
@@ -918,12 +1307,14 @@ async def create(
 
         finally:
             await directory.release(acct)
-            kind = FeedbackKind.SUCCESS if success else _feedback_kind(fail_exc) if fail_exc else FeedbackKind.SERVER_ERROR
+            kind = FeedbackKind.SUCCESS if success else _feedback_kind(
+                fail_exc) if fail_exc else FeedbackKind.SERVER_ERROR
             await directory.feedback(token, kind, selected_mode_id)
             if success:
                 asyncio.create_task(_quota_sync(token, selected_mode_id)).add_done_callback(_log_task_exception)
             else:
-                asyncio.create_task(_fail_sync(token, selected_mode_id, fail_exc)).add_done_callback(_log_task_exception)
+                asyncio.create_task(_fail_sync(token, selected_mode_id,
+                                               fail_exc)).add_done_callback(_log_task_exception)
 
         if success or not _retry:
             break
@@ -974,10 +1365,14 @@ async def create(
         if calls:
             output: list[dict] = []
             if full_think:
-                output.append({
+                output.append(
+                    {
                     "id":      reasoning_id,
                     "type":    "reasoning",
-                    "summary": [{"type": "summary_text", "text": full_think}],
+                        "summary": [{
+                            "type": "summary_text",
+                            "text": full_think
+                        }],
                     "status":  "completed",
                 })
             output.extend(_build_fc_items(calls))
@@ -986,26 +1381,38 @@ async def create(
             rt = estimate_tokens(full_think) if full_think else 0
             logger.info("responses tool_calls: model={} calls={}", model, len(calls))
             return make_resp_object(
-                response_id, model, "completed", output,
+                response_id,
+                model,
+                "completed",
+                output,
                 build_resp_usage(pt, ct + rt, rt),
             )
 
-    logger.info("responses request completed: model={} text_len={} reasoning_len={} image_count={}",
-                model, len(full_text), len(full_think), len(adapter.image_urls))
+    logger.info(
+        "responses request completed: model={} text_len={} reasoning_len={} image_count={}", model,
+        len(full_text), len(full_think), len(adapter.image_urls))
 
     output = []
     if full_think:
-        output.append({
+        output.append(
+            {
             "id":      reasoning_id,
             "type":    "reasoning",
-            "summary": [{"type": "summary_text", "text": full_think}],
+                "summary": [{
+                    "type": "summary_text",
+                    "text": full_think
+                }],
             "status":  "completed",
         })
     msg_item: dict = {
         "id":      message_id,
         "type":    "message",
         "role":    "assistant",
-        "content": [{"type": "output_text", "text": full_text, "annotations": adapter.annotations_list()}],
+        "content": [{
+            "type": "output_text",
+            "text": full_text,
+            "annotations": adapter.annotations_list()
+        }],
         "status":  "completed",
     }
     sources = adapter.search_sources_list()
@@ -1017,7 +1424,10 @@ async def create(
     ct = estimate_tokens(full_text)
     rt = estimate_tokens(full_think) if full_think else 0
     return make_resp_object(
-        response_id, model, "completed", output,
+        response_id,
+        model,
+        "completed",
+        output,
         build_resp_usage(pt, ct + rt, rt),
     )
 

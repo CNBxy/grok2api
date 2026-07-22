@@ -73,7 +73,7 @@ func (s *Service) RunAutoDisableBuildBot(ctx context.Context) {
 	case <-s.autoCleanWake:
 	default:
 	}
-	cfg, scheduledRevision := s.autoDisableBuildBotSnapshot()
+	_, scheduledRevision := s.autoDisableBuildBotSnapshot()
 	timer := time.NewTimer(s.autoDisableBuildBotInterval())
 	defer timer.Stop()
 	for {
@@ -81,7 +81,7 @@ func (s *Service) RunAutoDisableBuildBot(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-s.autoCleanWake:
-			cfg, scheduledRevision = s.autoDisableBuildBotSnapshot()
+			_, scheduledRevision = s.autoDisableBuildBotSnapshot()
 			resetCredentialRefreshTimer(timer, s.autoDisableBuildBotInterval())
 		case <-timer.C:
 			current, revision := s.autoDisableBuildBotSnapshot()
@@ -90,7 +90,7 @@ func (s *Service) RunAutoDisableBuildBot(ctx context.Context) {
 					s.logger.Warn("auto_disable_bot_failed", "error", err)
 				}
 			}
-			cfg, scheduledRevision = s.autoDisableBuildBotSnapshot()
+			_, scheduledRevision = s.autoDisableBuildBotSnapshot()
 			resetCredentialRefreshTimer(timer, s.autoDisableBuildBotInterval())
 		}
 	}

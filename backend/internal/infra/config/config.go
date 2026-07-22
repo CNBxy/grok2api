@@ -117,6 +117,7 @@ type AuthConfig struct {
 	AccessTokenTTL  Duration `yaml:"accessTokenTTL"`
 	RefreshTokenTTL Duration `yaml:"refreshTokenTTL"`
 	SecureCookies   bool     `yaml:"secureCookies"`
+	ManagementKey   string   `yaml:"managementKey"`
 }
 
 type ProviderConfig struct {

@@ -117,6 +117,8 @@ type AccountsConfig struct {
 	AutoCleanReauthInterval  string
 	AutoCleanReauthMinAge    string
 	AutoCleanIncludeDisabled bool
+	AutoDisableBuildBotEnabled   bool
+	AutoDisableBuildBotInterval  string
 }
 
 // EditableConfig 聚合管理端允许修改的运行参数。
@@ -351,6 +353,10 @@ func applyDomainConfig(base config.Config, value settingsdomain.Config) config.C
 	}
 	base.Accounts.AutoCleanReauthEnabled = value.Accounts.AutoCleanReauthEnabled
 	base.Accounts.AutoCleanIncludeDisabled = value.Accounts.AutoCleanIncludeDisabled
+	if value.Accounts.AutoDisableBuildBotInterval > 0 {
+		base.Accounts.AutoDisableBuildBotInterval = config.Duration(value.Accounts.AutoDisableBuildBotInterval)
+	}
+	base.Accounts.AutoDisableBuildBotEnabled = value.Accounts.AutoDisableBuildBotEnabled
 	return base
 }
 
@@ -405,6 +411,8 @@ func toDomainConfig(value config.Config) settingsdomain.Config {
 			AutoCleanReauthInterval:  value.Accounts.AutoCleanReauthInterval.Value(),
 			AutoCleanReauthMinAge:    value.Accounts.AutoCleanReauthMinAge.Value(),
 			AutoCleanIncludeDisabled: value.Accounts.AutoCleanIncludeDisabled,
+			AutoDisableBuildBotEnabled:  value.Accounts.AutoDisableBuildBotEnabled,
+			AutoDisableBuildBotInterval: value.Accounts.AutoDisableBuildBotInterval.Value(),
 		},
 	}
 }
@@ -472,6 +480,7 @@ func mergeEditable(current config.Config, input EditableConfig) (config.Config, 
 	if input.AccountsProvided {
 		next.Accounts.AutoCleanReauthEnabled = input.Accounts.AutoCleanReauthEnabled
 		next.Accounts.AutoCleanIncludeDisabled = input.Accounts.AutoCleanIncludeDisabled
+		next.Accounts.AutoDisableBuildBotEnabled = input.Accounts.AutoDisableBuildBotEnabled
 	}
 
 	type durationInput struct {
@@ -505,6 +514,7 @@ func mergeEditable(current config.Config, input EditableConfig) (config.Config, 
 		durations = append(durations,
 			durationInput{"accounts.autoCleanReauthInterval", input.Accounts.AutoCleanReauthInterval, func(value config.Duration) { next.Accounts.AutoCleanReauthInterval = value }},
 			durationInput{"accounts.autoCleanReauthMinAge", input.Accounts.AutoCleanReauthMinAge, func(value config.Duration) { next.Accounts.AutoCleanReauthMinAge = value }},
+			durationInput{"accounts.autoDisableBuildBotInterval", input.Accounts.AutoDisableBuildBotInterval, func(value config.Duration) { next.Accounts.AutoDisableBuildBotInterval = value }},
 		)
 	}
 	for _, item := range durations {
@@ -568,6 +578,8 @@ func toEditable(cfg config.Config) EditableConfig {
 			AutoCleanReauthInterval:  cfg.Accounts.AutoCleanReauthInterval.String(),
 			AutoCleanReauthMinAge:    cfg.Accounts.AutoCleanReauthMinAge.String(),
 			AutoCleanIncludeDisabled: cfg.Accounts.AutoCleanIncludeDisabled,
+			AutoDisableBuildBotEnabled:  cfg.Accounts.AutoDisableBuildBotEnabled,
+			AutoDisableBuildBotInterval: cfg.Accounts.AutoDisableBuildBotInterval.String(),
 		},
 		AccountsProvided: true,
 	}

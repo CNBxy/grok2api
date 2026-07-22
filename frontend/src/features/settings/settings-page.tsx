@@ -25,6 +25,7 @@ export function SettingsPage() {
   const { form, settingsQuery, updateMutation, reset } = useSettings();
   const [autoCleanConfirm, setAutoCleanConfirm] = useState<"enabled" | "includeDisabled" | null>(null);
   const autoCleanEnabled = form.watch("accounts.autoCleanReauthEnabled") === true;
+  const autoDisableBuildBotEnabled = form.watch("accounts.autoDisableBuildBotEnabled") === true;
 
   if (settingsQuery.isError) {
     return <ErrorState message={settingsQuery.error.message} onRetry={() => void settingsQuery.refetch()} />;
@@ -301,6 +302,27 @@ export function SettingsPage() {
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
+          </SettingsSection>
+
+          <SettingsSection title={t("settings.accounts.buildBotTitle")}>
+            <div className="space-y-0">
+              <SettingsField controlId="accounts-auto-disable-build-bot-enabled" label={t("settings.accounts.autoDisableBuildBotEnabled")} description={t("settings.accounts.autoDisableBuildBotEnabledHelp")}>
+                <Controller control={form.control} name="accounts.autoDisableBuildBotEnabled" render={({ field }) => (
+                  <div className="flex h-9 items-center">
+                    <Switch
+                      id="accounts-auto-disable-build-bot-enabled"
+                      checked={Boolean(field.value)}
+                      onCheckedChange={field.onChange}
+                    />
+                  </div>
+                )} />
+              </SettingsField>
+              <SettingsField controlId="accounts-auto-disable-build-bot-interval" label={t("settings.accounts.autoDisableBuildBotInterval")} description={t("settings.accounts.autoDisableBuildBotIntervalHelp")} error={form.formState.errors.accounts?.autoDisableBuildBotInterval?.message}>
+                <Controller control={form.control} name="accounts.autoDisableBuildBotInterval" render={({ field }) => (
+                  <DurationInput id="accounts-auto-disable-build-bot-interval" value={field.value} onChange={field.onChange} disabled={!autoDisableBuildBotEnabled} />
+                )} />
+              </SettingsField>
+            </div>
           </SettingsSection>
 
           <SettingsSection title={t("settings.routing.title")}>

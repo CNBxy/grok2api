@@ -277,9 +277,11 @@ type Service struct {
 	autoClean             AutoCleanConfig
 	autoCleanRevision     uint64
 	autoCleanWake         chan struct{}
-	buildBotFlagCache     *resultcache.Cache[string, []uint64]
-	logger                *slog.Logger
-	now                   func() time.Time
+	buildBotFlagCache         *resultcache.Cache[string, []uint64]
+	autoDisableBuildBot       AutoDisableBuildBotConfig
+	autoDisableBuildBotRevision uint64
+	logger                    *slog.Logger
+	now                       func() time.Time
 }
 
 func (s *Service) SetQuotaRecoveryQueue(queue repository.QuotaRecoveryQueue) {
@@ -303,6 +305,9 @@ func NewService(accounts repository.AccountRepository, audits repository.AuditRe
 		},
 		autoCleanWake:     make(chan struct{}, 1),
 		buildBotFlagCache: resultcache.New[string, []uint64](1, buildBotFlagCacheTTL),
+		autoDisableBuildBot: AutoDisableBuildBotConfig{
+			Enabled: false, Interval: 10 * time.Minute,
+		},
 		conversionPool:    batch.NewPool(25), syncPool: batch.NewPool(25), refreshPool: batch.NewPool(25), logger: slog.Default(),
 		now: func() time.Time { return time.Now().UTC() },
 	}

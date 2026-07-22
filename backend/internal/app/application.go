@@ -211,6 +211,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	cliAdapter.SetFallbackMarker(accountService)
 	accountService.SetLogger(logger)
 	accountService.UpdateAutoCleanConfig(accountAutoCleanConfig(cfg.Accounts))
+	accountService.UpdateAutoDisableBuildBotConfig(accountAutoDisableBuildBotConfig(cfg.Accounts))
 	accountService.SetConcurrencyLimiter(concurrency)
 	accountService.SetQuotaRecoveryQueue(quotaQueue)
 	accountService.SetTaskPools(conversionPool, syncPool, refreshPool)
@@ -305,6 +306,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		auditService.UpdateConfig(next.Audit.BatchSize, next.Audit.FlushInterval.Value())
 		clientKeyService.UpdateDefaults(next.ClientKeyDefaults.RPMLimit, next.ClientKeyDefaults.MaxConcurrent)
 		accountService.UpdateAutoCleanConfig(accountAutoCleanConfig(next.Accounts))
+		accountService.UpdateAutoDisableBuildBotConfig(accountAutoDisableBuildBotConfig(next.Accounts))
 	})
 	updateService := updatecheckapp.NewService(buildinfo.CurrentVersion(), nil)
 
@@ -358,6 +360,13 @@ func accountAutoCleanConfig(value config.AccountsConfig) accountapp.AutoCleanCon
 		Interval:        value.AutoCleanReauthInterval.Value(),
 		MinAge:          value.AutoCleanReauthMinAge.Value(),
 		IncludeDisabled: value.AutoCleanIncludeDisabled,
+	}
+}
+
+func accountAutoDisableBuildBotConfig(value config.AccountsConfig) accountapp.AutoDisableBuildBotConfig {
+	return accountapp.AutoDisableBuildBotConfig{
+		Enabled:  value.AutoDisableBuildBotEnabled,
+		Interval: value.AutoDisableBuildBotInterval.Value(),
 	}
 }
 
@@ -447,6 +456,10 @@ func (a *Application) Run(ctx context.Context) error {
 	})
 	startBackground("account_auto_clean", func(taskCtx context.Context) error {
 		a.accounts.RunAccountAutoClean(taskCtx)
+		return nil
+	})
+	startBackground("account_auto_disable_bot", func(taskCtx context.Context) error {
+		a.accounts.RunAutoDisableBuildBot(taskCtx)
 		return nil
 	})
 	startBackground("statsig_warmup", func(taskCtx context.Context) error {

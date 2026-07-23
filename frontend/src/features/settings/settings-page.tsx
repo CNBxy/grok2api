@@ -26,6 +26,7 @@ export function SettingsPage() {
   const { form, settingsQuery, updateMutation, reset } = useSettings();
   const [autoCleanConfirm, setAutoCleanConfirm] = useState<"enabled" | "includeDisabled" | null>(null);
   const autoCleanEnabled = form.watch("accounts.autoCleanReauthEnabled") === true;
+  const autoDisableBuildBotEnabled = form.watch("accounts.autoDisableBuildBotEnabled") === true;
   const buildForbiddenReauthEnabled = form.watch("accounts.markBuildForbiddenReauth") === true;
   const segmentedSelectorEnabled = form.watch("routing.segmentedSelector.enabled") === true;
 
@@ -229,7 +230,7 @@ export function SettingsPage() {
               <SettingsField controlId="routing-cooldown-base" label={t("settings.routing.cooldownBase")} description={t("settings.routing.cooldownBaseHelp")} error={form.formState.errors.routing?.cooldownBase?.message}><Controller control={form.control} name="routing.cooldownBase" render={({ field }) => <DurationInput id="routing-cooldown-base" value={field.value} onChange={field.onChange} />} /></SettingsField>
               <SettingsField controlId="routing-cooldown-max" label={t("settings.routing.cooldownMax")} description={t("settings.routing.cooldownMaxHelp")} error={form.formState.errors.routing?.cooldownMax?.message}><Controller control={form.control} name="routing.cooldownMax" render={({ field }) => <DurationInput id="routing-cooldown-max" value={field.value} onChange={field.onChange} />} /></SettingsField>
               <SettingsField controlId="routing-capacity-wait" label={t("settings.routing.capacityWait", { defaultValue: "Saturated account wait" })} description={t("settings.routing.capacityWaitHelp")} error={form.formState.errors.routing?.capacityWait?.message}><Controller control={form.control} name="routing.capacityWait" render={({ field }) => <DurationInput id="routing-capacity-wait" value={field.value} onChange={field.onChange} />} /></SettingsField>
-              <SettingsField controlId="routing-max-attempts" label={t("settings.routing.maxAttempts")} description={t("settings.routing.maxAttemptsHelp")} error={form.formState.errors.routing?.maxAttempts?.message}><Input id="routing-max-attempts" type="number" min={1} max={10} {...form.register("routing.maxAttempts", { valueAsNumber: true })} /></SettingsField>
+              <SettingsField controlId="routing-max-attempts" label={t("settings.routing.maxAttempts")} description={t("settings.routing.maxAttemptsHelp")} error={form.formState.errors.routing?.maxAttempts?.message}><Input id="routing-max-attempts" type="number" min={1} max={9999999} {...form.register("routing.maxAttempts", { valueAsNumber: true })} /></SettingsField>
               <SettingsField controlId="routing-prefer-free-build" label={t("settings.routing.preferFreeBuild")} description={t("settings.routing.preferFreeBuildHelp")}><Controller control={form.control} name="routing.preferFreeBuild" render={({ field }) => <div className="flex h-9 items-center"><Switch id="routing-prefer-free-build" checked={field.value} onCheckedChange={field.onChange} /></div>} /></SettingsField>
               <SettingsField controlId="routing-segmented-selector-enabled" label={t("settingsRoutingSegmented.enabled")} description={t("settingsRoutingSegmented.enabledHelp")}><Controller control={form.control} name="routing.segmentedSelector.enabled" render={({ field }) => <div className="flex h-9 items-center"><Switch id="routing-segmented-selector-enabled" checked={field.value} onCheckedChange={field.onChange} /></div>} /></SettingsField>
               <SettingsField controlId="routing-segmented-min-candidates" label={t("settingsRoutingSegmented.minCandidates")} description={t("settingsRoutingSegmented.minCandidatesHelp")} error={form.formState.errors.routing?.segmentedSelector?.minCandidates?.message}><Input id="routing-segmented-min-candidates" type="number" min={100} max={1_000_000} disabled={!segmentedSelectorEnabled} {...form.register("routing.segmentedSelector.minCandidates", { valueAsNumber: true })} /></SettingsField>
@@ -364,6 +365,27 @@ export function SettingsPage() {
                 </AlertDialogContent>
               </AlertDialog>
             </SettingsSection>
+              
+            <SettingsSection title={t("settings.accounts.buildBotTitle")}>
+            <div className="space-y-0">
+              <SettingsField controlId="accounts-auto-disable-build-bot-enabled" label={t("settings.accounts.autoDisableBuildBotEnabled")} description={t("settings.accounts.autoDisableBuildBotEnabledHelp")}>
+                <Controller control={form.control} name="accounts.autoDisableBuildBotEnabled" render={({ field }) => (
+                  <div className="flex h-9 items-center">
+                    <Switch
+                      id="accounts-auto-disable-build-bot-enabled"
+                      checked={Boolean(field.value)}
+                      onCheckedChange={field.onChange}
+                    />
+                  </div>
+                )} />
+              </SettingsField>
+              <SettingsField controlId="accounts-auto-disable-build-bot-interval" label={t("settings.accounts.autoDisableBuildBotInterval")} description={t("settings.accounts.autoDisableBuildBotIntervalHelp")} error={form.formState.errors.accounts?.autoDisableBuildBotInterval?.message}>
+                <Controller control={form.control} name="accounts.autoDisableBuildBotInterval" render={({ field }) => (
+                  <DurationInput id="accounts-auto-disable-build-bot-interval" value={field.value} onChange={field.onChange} disabled={!autoDisableBuildBotEnabled} />
+                )} />
+              </SettingsField>
+            </div>
+          </SettingsSection>  
           </SettingsPane>
 
           <SettingsPane value="about">

@@ -122,7 +122,7 @@ export const settingsSchema = z.object({
     cooldownBase: routingCooldownDuration,
     cooldownMax: routingCooldownDuration,
     capacityWait: routingCapacityWaitDuration,
-    maxAttempts: positiveInteger.max(10),
+    maxAttempts: positiveInteger.max(9999999),
     preferFreeBuild: z.boolean(),
     segmentedSelector: z.object({
       enabled: z.boolean(),
@@ -152,6 +152,11 @@ export const settingsSchema = z.object({
       return seconds >= 60 && seconds <= 30 * 86_400;
     }),
     autoCleanIncludeDisabled: z.boolean(),
+    autoDisableBuildBotEnabled: z.boolean(),
+    autoDisableBuildBotInterval: durationSchema.refine((value) => {
+      const seconds = durationSeconds(value);
+      return seconds >= 60 && seconds <= 3_600;
+    }),
   }),
 });
 
@@ -194,6 +199,8 @@ export function toSettingsForm(config: SettingsConfigDTO): SettingsForm {
       autoCleanReauthInterval: parseDuration(config.accounts.autoCleanReauthInterval),
       autoCleanReauthMinAge: parseDuration(config.accounts.autoCleanReauthMinAge),
       autoCleanIncludeDisabled: config.accounts.autoCleanIncludeDisabled,
+      autoDisableBuildBotEnabled: config.accounts.autoDisableBuildBotEnabled,
+      autoDisableBuildBotInterval: parseDuration(config.accounts.autoDisableBuildBotInterval),
     },
   };
 }
@@ -234,6 +241,8 @@ export function toSettingsDTO(config: SettingsForm): SettingsConfigDTO {
       autoCleanReauthInterval: formatDuration(config.accounts.autoCleanReauthInterval),
       autoCleanReauthMinAge: formatDuration(config.accounts.autoCleanReauthMinAge),
       autoCleanIncludeDisabled: config.accounts.autoCleanIncludeDisabled,
+      autoDisableBuildBotEnabled: config.accounts.autoDisableBuildBotEnabled,
+      autoDisableBuildBotInterval: formatDuration(config.accounts.autoDisableBuildBotInterval),
     },
   };
 }

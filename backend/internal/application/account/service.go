@@ -213,6 +213,14 @@ type BuildConversionResult struct {
 	BuildAccountIDs []uint64
 }
 
+type SSOConversionResult struct {
+	Created   bool   `json:"created"`
+	Linked    bool   `json:"linked"`
+	AccountID uint64 `json:"accountId,string"`
+	Name      string `json:"name"`
+	Email     string `json:"email"`
+}
+
 type ListFilter struct {
 	Provider  string
 	QuotaType string
@@ -1510,6 +1518,44 @@ func (s *Service) convertWebAccountToBuild(ctx context.Context, id uint64, strat
 		return 0, false, false, mapRepositoryError(err)
 	}
 	return buildAccount.ID, created, false, nil
+}
+
+// ConvertSSOToBuild 使用裸 SSO token 直接执行 Device Flow 转换为 Grok Build 账号。
+func (s *Service) ConvertSSOToBuild(ctx context.Context, ssoToken, email, name string) (SSOConversionResult, error) {
+	if ssoToken = strings.TrimSpace(ssoToken); ssoToken == "" {
+		return SSOConversionResult{}, invalidInput("SSO token 不能为空")
+	}
+	encryptedSSO, err := s.cipher.Encrypt(ssoToken)
+	if err != nil {
+		return SSOConversionResult{}, fmt.Errorf("加密 SSO token 失败: %w", err)
+	}
+	credential := accountdomain.Credential{
+		Provider:             accountdomain.ProviderWeb,
+		AuthType:             accountdomain.AuthTypeSSO,
+		EncryptedAccessToken: encryptedSSO,
+		Name:                 strings.TrimSpace(name),
+		Email:                strings.TrimSpace(email),
+	}
+	converter, ok := s.providers.BuildConverter(accountdomain.ProviderWeb)
+	if !ok {
+		return SSOConversionResult{}, fmt.Errorf("Grok Web SSO 转换能力未注册")
+	}
+	seed, err := converter.ConvertToBuild(ctx, credential)
+	if err != nil {
+		return SSOConversionResult{}, err
+	}
+	buildAccount, created, err := s.persistSeed(ctx, seed)
+	if err != nil {
+		return SSOConversionResult{}, err
+	}
+	s.reconcileProviderLinksBestEffort(ctx, buildAccount.ID)
+	result := SSOConversionResult{AccountID: buildAccount.ID, Name: buildAccount.Name, Email: buildAccount.Email}
+	if created {
+		result.Created = true
+	} else {
+		result.Linked = true
+	}
+	return result, nil
 }
 
 // ExportCredentials 保留 Grok Build 默认导出语义，供旧调用方兼容。

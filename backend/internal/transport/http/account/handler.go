@@ -136,6 +136,7 @@ func (h *Handler) Register(router *gin.RouterGroup) {
 	router.GET("/accounts/:id", h.get)
 	router.POST("/accounts/device/start", h.startDevice)
 	router.POST("/accounts/device/:sessionId/poll", h.pollDevice)
+	router.POST("/accounts/device/sso-to-build", h.convertSSOToBuild)
 	router.POST("/accounts/import", h.importAuth)
 	router.POST("/accounts/import/body", h.importAuthBody)
 	router.POST("/accounts/web/import", h.importWebAuth)
@@ -200,6 +201,12 @@ type buildConversionRequest struct {
 	IDs      []string                           `json:"ids"`
 	All      bool                               `json:"all"`
 	Strategy accountapp.BuildConversionStrategy `json:"strategy"`
+}
+
+type ssoConversionRequest struct {
+	SSO   string `json:"sso" binding:"required"`
+	Email string `json:"email"`
+	Name  string `json:"name"`
 }
 
 type webConsoleSyncRequest struct {
@@ -657,6 +664,23 @@ func (h *Handler) convertWebToBuild(c *gin.Context) {
 		}
 	}
 	h.streamWebToBuildConversion(c, request.All, ids, request.Strategy)
+}
+
+func (h *Handler) convertSSOToBuild(c *gin.Context) {
+	var req ssoConversionRequest
+	if c.ShouldBindJSON(&req) != nil {
+		response.Error(c, http.StatusBadRequest, "invalidRequest", "请求参数无效")
+		return
+	}
+	result, err := h.service.ConvertSSOToBuild(c.Request.Context(), req.SSO, req.Email, req.Name)
+	if err != nil {
+		h.writeServiceError(c, "ssoConversionFailed", err, http.StatusBadGateway, "SSO 转换失败")
+		return
+	}
+	response.Success(c, http.StatusOK, gin.H{
+		"created": result.Created, "linked": result.Linked,
+		"account": gin.H{"id": result.AccountID, "name": result.Name, "email": result.Email},
+	})
 }
 
 func (h *Handler) syncWebToConsole(c *gin.Context) {

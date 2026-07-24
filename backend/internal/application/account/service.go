@@ -1521,34 +1521,42 @@ func (s *Service) convertWebAccountToBuild(ctx context.Context, id uint64, strat
 }
 
 // ConvertSSOToBuild 使用裸 SSO token 直接执行 Device Flow 转换为 Grok Build 账号。
+// 调用前需确保 SSO 已先导入 Grok Web（ProviderWeb + AuthTypeSSO）。
+// 通过 UpsertByIdentity 查找已有 Web 账号，再走标准转换路径（与批量转换对齐）。
 func (s *Service) ConvertSSOToBuild(ctx context.Context, ssoToken, email, name string) (SSOConversionResult, error) {
 	if ssoToken = strings.TrimSpace(ssoToken); ssoToken == "" {
 		return SSOConversionResult{}, invalidInput("SSO token 不能为空")
 	}
-	encryptedSSO, err := s.cipher.Encrypt(ssoToken)
-	if err != nil {
-		return SSOConversionResult{}, fmt.Errorf("加密 SSO token 失败: %w", err)
+	webEmail := strings.TrimSpace(email)
+	if webEmail == "" {
+		return SSOConversionResult{}, invalidInput("email 不能为空")
 	}
-	credential := accountdomain.Credential{
-		Provider:             accountdomain.ProviderWeb,
-		AuthType:             accountdomain.AuthTypeSSO,
-		EncryptedAccessToken: encryptedSSO,
-		Name:                 strings.TrimSpace(name),
-		Email:                strings.TrimSpace(email),
+
+	webSeed := provider.CredentialSeed{
+		Provider:    accountdomain.ProviderWeb,
+		AuthType:    accountdomain.AuthTypeSSO,
+		AccessToken: ssoToken,
+		Name:        strings.TrimSpace(name),
+		Email:       webEmail,
 	}
-	converter, ok := s.providers.BuildConverter(accountdomain.ProviderWeb)
-	if !ok {
-		return SSOConversionResult{}, fmt.Errorf("Grok Web SSO 转换能力未注册")
-	}
-	seed, err := converter.ConvertToBuild(ctx, credential)
+	webAccount, created, err := s.persistSeed(ctx, webSeed)
 	if err != nil {
 		return SSOConversionResult{}, err
 	}
-	buildAccount, created, err := s.persistSeed(ctx, seed)
+	if created {
+		return SSOConversionResult{}, fmt.Errorf("SSO 转换失败：未找到已导入的 Grok Web 账号 (email=%s)", webEmail)
+	}
+
+	buildID, created, _, err := s.convertWebAccountToBuild(ctx, webAccount.ID, BuildConversionAll)
 	if err != nil {
 		return SSOConversionResult{}, err
 	}
-	s.reconcileProviderLinksBestEffort(ctx, buildAccount.ID)
+
+	buildAccount, err := s.accounts.Get(ctx, buildID)
+	if err != nil {
+		return SSOConversionResult{}, mapRepositoryError(err)
+	}
+
 	result := SSOConversionResult{AccountID: buildAccount.ID, Name: buildAccount.Name, Email: buildAccount.Email}
 	if created {
 		result.Created = true

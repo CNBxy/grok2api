@@ -1104,7 +1104,7 @@ func (h *Handler) writeServiceError(c *gin.Context, code string, err error, fall
 	case errors.Is(err, accountapp.ErrWebAccountScriptBusy):
 		response.Error(c, http.StatusConflict, "webAccountScriptBusy", err.Error())
 	default:
-		response.Error(c, fallbackStatus, code, fallbackMessage)
+		response.Error(c, fallbackStatus, code, err.Error())
 	}
 }
 

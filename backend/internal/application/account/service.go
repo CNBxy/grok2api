@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -1500,7 +1501,7 @@ func (s *Service) convertWebAccountToBuild(ctx context.Context, id uint64, strat
 		if errors.Is(err, provider.ErrUnauthorized) {
 			err = errors.Join(err, s.markSSOCredentialRejected(ctx, value, "Grok Web SSO credential rejected"))
 		}
-		return 0, false, false, err
+		return 0, false, false, withLocation(err)
 	}
 	seed.Provider = accountdomain.ProviderBuild
 	seed.AuthType = accountdomain.AuthTypeOAuth
@@ -1509,10 +1510,10 @@ func (s *Service) convertWebAccountToBuild(ctx context.Context, id uint64, strat
 	}
 	buildAccount, created, err := s.persistSeed(ctx, seed)
 	if err != nil {
-		return 0, false, false, err
+		return 0, false, false, withLocation(err)
 	}
 	if value.LinkedAccountID != 0 && buildAccount.ID != value.LinkedAccountID {
-		return 0, false, false, fmt.Errorf("重新转换后的 Grok Build 账号身份不一致")
+		return 0, false, false, withLocation(fmt.Errorf("重新转换后的 Grok Build 账号身份不一致"))
 	}
 	if err := s.accounts.LinkWebToBuild(ctx, id, buildAccount.ID); err != nil {
 		return 0, false, false, mapRepositoryError(err)
@@ -1541,7 +1542,7 @@ func (s *Service) ConvertSSOToBuild(ctx context.Context, ssoToken, email, name s
 	}
 	webAccount, created, err := s.persistSeed(ctx, webSeed)
 	if err != nil {
-		return SSOConversionResult{}, err
+		return SSOConversionResult{}, withLocation(err)
 	}
 	if created {
 		return SSOConversionResult{}, fmt.Errorf("SSO 转换失败：未找到已导入的 Grok Web 账号 (email=%s)", webEmail)
@@ -1549,7 +1550,7 @@ func (s *Service) ConvertSSOToBuild(ctx context.Context, ssoToken, email, name s
 
 	buildID, created, _, err := s.convertWebAccountToBuild(ctx, webAccount.ID, BuildConversionAll)
 	if err != nil {
-		return SSOConversionResult{}, err
+		return SSOConversionResult{}, withLocation(err)
 	}
 
 	buildAccount, err := s.accounts.Get(ctx, buildID)
@@ -3000,6 +3001,25 @@ func normalizeIDs(ids []uint64, limit int) ([]uint64, error) {
 // invalidInput 为可安全返回给管理端的账号参数错误附加稳定语义。
 func invalidInput(message string) error {
 	return fmt.Errorf("%w: %s", ErrInvalidInput, message)
+}
+
+// withLocation 为错误附加调用位置的 file:line 信息，用于 SSO→Build 等复杂流程的调试追踪。
+func withLocation(err error) error {
+	if err == nil {
+		return nil
+	}
+	_, file, line, ok := runtime.Caller(1)
+	if !ok {
+		return err
+	}
+	short := file
+	for i := len(file) - 1; i >= 0; i-- {
+		if file[i] == '/' {
+			short = file[i+1:]
+			break
+		}
+	}
+	return fmt.Errorf("%s:%d: %w", short, line, err)
 }
 
 // mapRepositoryError 隔离持久化层错误，避免 transport 依赖仓储实现语义。

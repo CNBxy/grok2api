@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,13 +46,32 @@ type ssoBuildFlow struct {
 	clientVersion string
 }
 
+// withLocation 为错误附加调用位置的 file:line 信息，用于调试追踪。
+func withLocation(err error) error {
+	if err == nil {
+		return nil
+	}
+	_, file, line, ok := runtime.Caller(1)
+	if !ok {
+		return err
+	}
+	short := file
+	for i := len(file) - 1; i >= 0; i-- {
+		if file[i] == '/' {
+			short = file[i+1:]
+			break
+		}
+	}
+	return fmt.Errorf("%s:%d: %w", short, line, err)
+}
+
 func (a *Adapter) ConvertToBuild(ctx context.Context, credential accountdomain.Credential) (provider.CredentialSeed, error) {
 	if credential.Provider != accountdomain.ProviderWeb || credential.AuthType != accountdomain.AuthTypeSSO {
 		return provider.CredentialSeed{}, fmt.Errorf("仅 Grok Web SSO 账号支持转换")
 	}
 	token, err := a.cipher.Decrypt(credential.EncryptedAccessToken)
 	if err != nil {
-		return provider.CredentialSeed{}, fmt.Errorf("解密 Grok Web SSO: %w", err)
+		return provider.CredentialSeed{}, withLocation(fmt.Errorf("解密 Grok Web SSO: %w", err))
 	}
 	token = normalizeSSOToken(token)
 	if token == "" {
@@ -59,7 +79,7 @@ func (a *Adapter) ConvertToBuild(ctx context.Context, credential accountdomain.C
 	}
 	lease, err := a.egress.AcquireCredential(ctx, egressdomain.ScopeWeb, credential)
 	if err != nil {
-		return provider.CredentialSeed{}, err
+		return provider.CredentialSeed{}, withLocation(err)
 	}
 	defer lease.Release()
 	requestCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
@@ -73,7 +93,7 @@ func (a *Adapter) ConvertToBuild(ctx context.Context, credential accountdomain.C
 	seed, err := flow.convert(requestCtx, credential)
 	if err != nil {
 		a.egress.Feedback(context.WithoutCancel(ctx), lease.NodeID, conversionStatus(err), err)
-		return provider.CredentialSeed{}, err
+		return provider.CredentialSeed{}, withLocation(err)
 	}
 	a.egress.Feedback(context.WithoutCancel(ctx), lease.NodeID, http.StatusOK, nil)
 	return seed, nil

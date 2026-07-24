@@ -22,14 +22,15 @@ import (
 )
 
 const (
-	ssoBuildClientID = "b1a00492-073a-47ea-816f-4c329264a828"
-	ssoBuildScope    = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write"
-	ssoAccountsURL   = "https://accounts.x.ai/"
-	ssoDeviceURL     = "https://auth.x.ai/oauth2/device/code"
-	ssoVerifyURL     = "https://auth.x.ai/oauth2/device/verify"
-	ssoApproveURL    = "https://auth.x.ai/oauth2/device/approve"
-	ssoTokenURL      = "https://auth.x.ai/oauth2/token"
-	maxAuthBody      = 2 << 20
+	ssoBuildClientID    = "b1a00492-073a-47ea-816f-4c329264a828"
+	ssoBuildScope       = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write workspaces:read workspaces:write"
+	ssoBuildSurface     = "ui"
+	ssoAccountsURL      = "https://accounts.x.ai/"
+	ssoDeviceURL        = "https://auth.x.ai/oauth2/device/code"
+	ssoVerifyURL        = "https://auth.x.ai/oauth2/device/verify"
+	ssoApproveURL       = "https://auth.x.ai/oauth2/device/approve"
+	ssoTokenURL         = "https://auth.x.ai/oauth2/token"
+	maxAuthBody         = 2 << 20
 )
 
 type ssoBuildHTTPClient interface {
@@ -37,9 +38,11 @@ type ssoBuildHTTPClient interface {
 }
 
 type ssoBuildFlow struct {
-	client    ssoBuildHTTPClient
-	userAgent string
-	cookies   map[string]string
+	client        ssoBuildHTTPClient
+	userAgent     string
+	cookies       map[string]string
+	clientSurface string
+	clientVersion string
 }
 
 func (a *Adapter) ConvertToBuild(ctx context.Context, credential accountdomain.Credential) (provider.CredentialSeed, error) {
@@ -63,7 +66,9 @@ func (a *Adapter) ConvertToBuild(ctx context.Context, credential accountdomain.C
 	defer cancel()
 	flow := &ssoBuildFlow{
 		client: lease, userAgent: lease.UserAgent,
-		cookies: map[string]string{"sso": token, "sso-rw": token},
+		cookies:       map[string]string{"sso": token, "sso-rw": token},
+		clientSurface: ssoBuildSurface,
+		clientVersion: a.config().ClientVersion,
 	}
 	seed, err := flow.convert(requestCtx, credential)
 	if err != nil {
@@ -86,8 +91,8 @@ func (f *ssoBuildFlow) convert(ctx context.Context, credential accountdomain.Cre
 		return provider.CredentialSeed{}, fmt.Errorf("校验 Grok Web SSO 失败: %w", conversionHTTPError{status: status})
 	}
 
-	form := url.Values{"client_id": {ssoBuildClientID}, "scope": {ssoBuildScope}}
-	status, _, body, err := f.do(ctx, http.MethodPost, ssoDeviceURL, form)
+	form := url.Values{"client_id": {ssoBuildClientID}, "scope": {ssoBuildScope}, "referrer": {"grok-build"}}
+	status, _, body, err := f.do(ctx, http.MethodPost, ssoDeviceURL, form, true)
 	if err != nil {
 		return provider.CredentialSeed{}, err
 	}
@@ -186,7 +191,7 @@ func (f *ssoBuildFlow) pollToken(ctx context.Context, deviceCode string, interva
 		}
 		status, _, body, err := f.do(ctx, http.MethodPost, ssoTokenURL, url.Values{
 			"grant_type": {"urn:ietf:params:oauth:grant-type:device_code"}, "client_id": {ssoBuildClientID}, "device_code": {deviceCode},
-		})
+		}, true)
 		if err != nil {
 			return ssoBuildToken{}, err
 		}
@@ -225,10 +230,11 @@ func (f *ssoBuildFlow) pollToken(ctx context.Context, deviceCode string, interva
 	return ssoBuildToken{}, fmt.Errorf("xAI Device Flow 轮询超时")
 }
 
-func (f *ssoBuildFlow) do(ctx context.Context, method, endpoint string, form url.Values) (int, string, []byte, error) {
+func (f *ssoBuildFlow) do(ctx context.Context, method, endpoint string, form url.Values, deviceFlow ...bool) (int, string, []byte, error) {
 	if !safeXAIURL(endpoint) {
 		return 0, "", nil, fmt.Errorf("xAI OAuth URL 不安全")
 	}
+	isDeviceFlow := len(deviceFlow) > 0 && deviceFlow[0]
 	currentURL := endpoint
 	currentMethod := method
 	currentForm := form
@@ -247,6 +253,14 @@ func (f *ssoBuildFlow) do(ctx context.Context, method, endpoint string, form url
 		request.Header.Set("Cookie", f.cookieHeader())
 		if currentForm != nil {
 			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+		if isDeviceFlow {
+			if f.clientVersion != "" {
+				request.Header.Set("x-grok-client-version", f.clientVersion)
+			}
+			if f.clientSurface != "" {
+				request.Header.Set("x-grok-client-surface", f.clientSurface)
+			}
 		}
 		response, err := f.client.Do(request)
 		if err != nil {

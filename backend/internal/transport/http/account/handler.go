@@ -674,7 +674,7 @@ func (h *Handler) convertSSOToBuild(c *gin.Context) {
 	}
 	result, err := h.service.ConvertSSOToBuild(c.Request.Context(), req.SSO, req.Email, req.Name)
 	if err != nil {
-		h.writeServiceError(c, "ssoConversionFailed", err, http.StatusBadGateway, "SSO 转换失败")
+		h.writeServiceError(c, "ssoConversionFailed", err, http.StatusInternalServerError, "SSO 转换失败")
 		return
 	}
 	response.Success(c, http.StatusOK, gin.H{

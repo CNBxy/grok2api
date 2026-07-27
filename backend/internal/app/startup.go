@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -180,13 +181,23 @@ func readinessSnapshot(
 		if usable[route.Provider] || route.SupportedAccounts == 0 {
 			continue
 		}
-		candidates, listErr := accounts.ListRoutingCandidates(ctx, route.Provider, route.UpstreamModel, providers.QuotaMode(route.Provider, route.UpstreamModel))
+		candidates, listErr := accounts.ListRoutingCandidates(ctx, route.Provider, route.ID, route.UpstreamModel, providers.QuotaMode(route.Provider, route.UpstreamModel))
 		if listErr != nil {
 			providerErrors[route.Provider] = true
 			continue
 		}
 		for _, candidate := range candidates {
-			if startupCandidateUsable(candidate, now, providers) {
+			if !startupCandidateUsable(candidate, now, providers) {
+				continue
+			}
+			material, materialErr := accounts.GetCredentialMaterial(ctx, candidate.Credential.ID, candidate.Credential.Provider)
+			if materialErr != nil {
+				if !errors.Is(materialErr, repository.ErrNotFound) {
+					providerErrors[route.Provider] = true
+				}
+				continue
+			}
+			if material.EncryptedAccessToken != "" {
 				usable[route.Provider] = true
 				break
 			}
@@ -262,7 +273,7 @@ func newReadinessStartupReport(report startupReport) *httpserver.ReadinessStartu
 
 func startupCandidateUsable(candidate accountdomain.RoutingCandidate, now time.Time, providers *provider.Registry) bool {
 	credential := candidate.Credential
-	if credential.EncryptedAccessToken == "" || credential.AuthStatus != accountdomain.AuthStatusActive {
+	if credential.AuthType == "" || credential.AuthStatus != accountdomain.AuthStatusActive {
 		return false
 	}
 	refreshable := credential.AuthType == accountdomain.AuthTypeOAuth

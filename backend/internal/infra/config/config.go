@@ -135,6 +135,7 @@ type AuthConfig struct {
 	AccessTokenTTL  Duration `yaml:"accessTokenTTL"`
 	RefreshTokenTTL Duration `yaml:"refreshTokenTTL"`
 	SecureCookies   bool     `yaml:"secureCookies"`
+	ManagementKey   string   `yaml:"managementKey"`
 }
 
 type ProviderConfig struct {
@@ -242,6 +243,8 @@ type AccountsConfig struct {
 	AutoCleanReauthInterval   Duration
 	AutoCleanReauthMinAge     Duration
 	AutoCleanIncludeDisabled  bool
+	AutoDisableBuildBotEnabled   bool
+	AutoDisableBuildBotInterval  Duration
 }
 
 type Secrets struct {
@@ -570,6 +573,9 @@ func (c Config) Validate() error {
 	if c.Accounts.AutoCleanReauthMinAge.Value() < time.Minute || c.Accounts.AutoCleanReauthMinAge.Value() > 30*24*time.Hour {
 		return errors.New("accounts.autoCleanReauthMinAge 必须在 1 分钟到 30 天之间")
 	}
+	if c.Accounts.AutoDisableBuildBotInterval.Value() < time.Minute || c.Accounts.AutoDisableBuildBotInterval.Value() > time.Hour {
+		return errors.New("accounts.autoDisableBuildBotInterval 必须在 1 分钟到 1 小时之间")
+  }
 	if len(c.Accounts.BuildForbiddenReauthCodes) > 32 {
 		return errors.New("accounts.buildForbiddenReauthCodes 最多支持 32 个错误码")
 	}
@@ -690,6 +696,8 @@ func defaultConfig() Config {
 			AutoCleanReauthInterval:   Duration(10 * time.Minute),
 			AutoCleanReauthMinAge:     Duration(time.Hour),
 			AutoCleanIncludeDisabled:  false,
+			AutoDisableBuildBotEnabled:   false,
+			AutoDisableBuildBotInterval:  Duration(10 * time.Minute),
 		},
 	}
 }

@@ -139,9 +139,13 @@ func (h *Handler) Register(router *gin.RouterGroup) {
 	router.GET("/accounts/:id", h.get)
 	router.POST("/accounts/device/start", h.startDevice)
 	router.POST("/accounts/device/:sessionId/poll", h.pollDevice)
+	router.POST("/accounts/device/sso-to-build", h.convertSSOToBuild)
 	router.POST("/accounts/import", h.importAuth)
+	router.POST("/accounts/import/body", h.importAuthBody)
 	router.POST("/accounts/web/import", h.importWebAuth)
+	router.POST("/accounts/web/import/body", h.importWebAuthBody)
 	router.POST("/accounts/console/import", h.importConsoleAuth)
+	router.POST("/accounts/console/import/body", h.importConsoleAuthBody)
 	router.POST("/accounts/web/convert-to-build", h.convertWebToBuild)
 	router.POST("/accounts/web/sync-to-console", h.syncWebToConsole)
 	router.POST("/accounts/web/run-scripts", h.runWebAccountScripts)
@@ -217,6 +221,12 @@ type buildConversionRequest struct {
 	IDs      []string                           `json:"ids"`
 	All      bool                               `json:"all"`
 	Strategy accountapp.BuildConversionStrategy `json:"strategy"`
+}
+
+type ssoConversionRequest struct {
+	SSO   string `json:"sso" binding:"required"`
+	Email string `json:"email"`
+	Name  string `json:"name"`
 }
 
 type webConsoleSyncRequest struct {
@@ -744,12 +754,24 @@ func (h *Handler) importAuth(c *gin.Context) {
 	h.importFile(c, accountdomain.ProviderBuild)
 }
 
+func (h *Handler) importAuthBody(c *gin.Context) {
+	h.importBody(c, accountdomain.ProviderBuild)
+}
+
 func (h *Handler) importWebAuth(c *gin.Context) {
 	h.importFile(c, accountdomain.ProviderWeb)
 }
 
+func (h *Handler) importWebAuthBody(c *gin.Context) {
+	h.importBody(c, accountdomain.ProviderWeb)
+}
+
 func (h *Handler) importConsoleAuth(c *gin.Context) {
 	h.importFile(c, accountdomain.ProviderConsole)
+}
+
+func (h *Handler) importConsoleAuthBody(c *gin.Context) {
+	h.importBody(c, accountdomain.ProviderConsole)
 }
 
 func (h *Handler) convertWebToBuild(c *gin.Context) {
@@ -782,6 +804,23 @@ func (h *Handler) convertWebToBuild(c *gin.Context) {
 		}
 	}
 	h.streamWebToBuildConversion(c, request.All, ids, request.Strategy)
+}
+
+func (h *Handler) convertSSOToBuild(c *gin.Context) {
+	var req ssoConversionRequest
+	if c.ShouldBindJSON(&req) != nil {
+		response.Error(c, http.StatusBadRequest, "invalidRequest", "请求参数无效")
+		return
+	}
+	result, err := h.service.ConvertSSOToBuild(c.Request.Context(), req.SSO, req.Email, req.Name)
+	if err != nil {
+		h.writeServiceError(c, "ssoConversionFailed", err, http.StatusInternalServerError, "SSO 转换失败")
+		return
+	}
+	response.Success(c, http.StatusOK, gin.H{
+		"created": result.Created, "linked": result.Linked,
+		"account": gin.H{"id": result.AccountID, "name": result.Name, "email": result.Email},
+	})
 }
 
 func (h *Handler) syncWebToConsole(c *gin.Context) {
@@ -1069,6 +1108,41 @@ func readAccountImportDocuments(c *gin.Context, fileDescription string) ([][]byt
 	return documents, true
 }
 
+func (h *Handler) importBody(c *gin.Context, providerValue accountdomain.Provider) {
+	data, err := io.ReadAll(io.LimitReader(c.Request.Body, maxAccountImportBytes+1))
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "invalidAuthFile", "读取请求体失败")
+		return
+	}
+	if len(data) == 0 {
+		response.Error(c, http.StatusBadRequest, "invalidAuthFile", "请求体不能为空")
+		return
+	}
+	if len(data) > maxAccountImportBytes {
+		response.Error(c, http.StatusRequestEntityTooLarge, "accountImportFileTooLarge", "账号凭据数据大小不能超过 30 MiB")
+		return
+	}
+	stream := newAccountEventStream(c)
+	defer stream.Close()
+	var total atomic.Int64
+	pipeline := h.startSyncPipeline(c.Request.Context(), stream.SyncProgressObserver())
+	var result accountapp.ImportResult
+	var importErr error
+	if providerValue == accountdomain.ProviderWeb {
+		result, importErr = h.service.ImportWebCredentialDocumentsWithProgress(pipeline.ctx, [][]byte{data}, pipeline.Observe, stream.PhaseProgressObserver("importing", &total))
+	} else if providerValue == accountdomain.ProviderConsole {
+		result, importErr = h.service.ImportConsoleCredentialDocumentsWithProgress(pipeline.ctx, [][]byte{data}, pipeline.Observe, stream.PhaseProgressObserver("importing", &total))
+	} else {
+		result, importErr = h.service.ImportCredentialDocumentsWithProgress(pipeline.ctx, [][]byte{data}, pipeline.Observe, stream.PhaseProgressObserver("importing", &total))
+	}
+	syncResult := pipeline.Finish(importErr != nil)
+	if importErr != nil {
+		stream.WriteError("authImportFailed", "导入账号失败")
+		return
+	}
+	_ = stream.Write("complete", accountImportResponse{Created: result.Created, Updated: result.Updated, Synced: syncResult.Succeeded, SyncFailed: syncResult.Failed})
+}
+
 func (h *Handler) refreshWebQuota(c *gin.Context) {
 	id, ok := pathID(c)
 	if !ok {
@@ -1295,7 +1369,7 @@ func (h *Handler) writeServiceError(c *gin.Context, code string, err error, fall
 	case errors.Is(err, accountapp.ErrWebAccountScriptBusy):
 		response.Error(c, http.StatusConflict, "webAccountScriptBusy", err.Error())
 	default:
-		response.Error(c, fallbackStatus, code, fallbackMessage)
+		response.Error(c, fallbackStatus, code, err.Error())
 	}
 }
 

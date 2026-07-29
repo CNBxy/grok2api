@@ -150,7 +150,7 @@ func (s *Service) runAutoDisableBuildBot(ctx context.Context, cfg AutoDisableBui
 
 		if len(toDisable) > 0 {
 			disabled := false
-			updated, err := s.accounts.UpdateMany(runCtx, toDisable, repository.AccountUpdates{Enabled: &disabled})
+			updated, err := s.accounts.UpdateMany(runCtx, accountdomain.ProviderBuild, toDisable, repository.AccountUpdates{Enabled: &disabled})
 			if err != nil {
 				s.logger.Warn("auto_disable_bot_disable_failed", "accounts", toDisable, "error", err)
 			} else {
@@ -166,7 +166,7 @@ func (s *Service) runAutoDisableBuildBot(ctx context.Context, cfg AutoDisableBui
 
 		if len(toEnable) > 0 {
 			enabled := true
-			updated, err := s.accounts.UpdateMany(runCtx, toEnable, repository.AccountUpdates{Enabled: &enabled})
+			updated, err := s.accounts.UpdateMany(runCtx, accountdomain.ProviderBuild, toEnable, repository.AccountUpdates{Enabled: &enabled})
 			if err != nil {
 				s.logger.Warn("auto_disable_bot_enable_failed", "accounts", toEnable, "error", err)
 			} else {

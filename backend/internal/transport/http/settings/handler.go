@@ -128,6 +128,8 @@ type accountsConfigDTO struct {
 	AutoCleanReauthInterval   string    `json:"autoCleanReauthInterval"`
 	AutoCleanReauthMinAge     string    `json:"autoCleanReauthMinAge"`
 	AutoCleanIncludeDisabled  bool      `json:"autoCleanIncludeDisabled"`
+	AutoDisableBuildBotEnabled  bool   `json:"autoDisableBuildBotEnabled"`
+	AutoDisableBuildBotInterval string `json:"autoDisableBuildBotInterval"`
 }
 
 type settingsResponse struct {
@@ -241,6 +243,8 @@ func (value settingsConfigDTO) toApplication() settingsapp.EditableConfig {
 			AutoCleanReauthInterval:           value.Accounts.AutoCleanReauthInterval,
 			AutoCleanReauthMinAge:             value.Accounts.AutoCleanReauthMinAge,
 			AutoCleanIncludeDisabled:          value.Accounts.AutoCleanIncludeDisabled,
+			AutoDisableBuildBotEnabled:        value.Accounts.AutoDisableBuildBotEnabled,
+			AutoDisableBuildBotInterval:       value.Accounts.AutoDisableBuildBotInterval,
 		}
 		result.AccountsProvided = true
 	}
@@ -307,6 +311,8 @@ func newSettingsResponse(value settingsapp.Snapshot) settingsResponse {
 				AutoCleanReauthInterval:   config.Accounts.AutoCleanReauthInterval,
 				AutoCleanReauthMinAge:     config.Accounts.AutoCleanReauthMinAge,
 				AutoCleanIncludeDisabled:  config.Accounts.AutoCleanIncludeDisabled,
+				AutoDisableBuildBotEnabled:  config.Accounts.AutoDisableBuildBotEnabled,
+				AutoDisableBuildBotInterval: config.Accounts.AutoDisableBuildBotInterval,
 			},
 		},
 		RecommendedProviderBuild: providerBuildRecommendationDTO{

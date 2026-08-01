@@ -243,6 +243,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	cliAdapter.SetFallbackMarker(accountService)
 	accountService.SetLogger(logger)
 	accountService.UpdateAutoCleanConfig(accountAutoCleanConfig(cfg.Accounts))
+	accountService.UpdateAutoDisableBuildBotConfig(accountAutoDisableBuildBotConfig(cfg.Accounts))
 	accountService.SetConcurrencyLimiter(concurrency)
 	accountService.SetQuotaRecoveryQueue(quotaQueue)
 	accountService.SetQuotaRefreshCoordinator(quotaRefreshState)
@@ -362,6 +363,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		auditService.UpdateLedgerConfig(auditLedgerConfig(next.Audit))
 		clientKeyService.UpdateDefaults(next.ClientKeyDefaults.RPMLimit, next.ClientKeyDefaults.MaxConcurrent)
 		accountService.UpdateAutoCleanConfig(accountAutoCleanConfig(next.Accounts))
+		accountService.UpdateAutoDisableBuildBotConfig(accountAutoDisableBuildBotConfig(next.Accounts))
 	})
 	updateService := updatecheckapp.NewService(buildinfo.CurrentVersion(), nil)
 
@@ -369,7 +371,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	readiness := func(readyCtx context.Context) httpserver.ReadinessSnapshot {
 		return readinessSnapshot(readyCtx, startup, runtimeHealth, modelRepo, accountRepo, providers, auditService)
 	}
-	router := httpserver.New(httpserver.Dependencies{Logger: logger, RequestTimeout: cfg.Server.RequestTimeout.Value(), MaxBodyBytes: cfg.Server.MaxBodyBytes, ConcurrencyGate: inferenceConcurrency, SecureCookies: cfg.Auth.SecureCookies, SwaggerEnabled: cfg.Server.SwaggerEnabled, PublicAPIBaseURL: cfg.Frontend.EffectivePublicAPIBaseURL(), FrontendStaticPath: cfg.Frontend.StaticPath, Readiness: readiness, TrafficReady: startup.acceptsTraffic, AdminAuth: adminService, Accounts: accountService, AccountSync: accountSyncService, Models: modelService, ClientKeys: clientKeyService, Audits: auditService, Dashboard: dashboardService, Gateway: gatewayService, Media: mediaService, Settings: settingsService, Egress: egressService, QualityGuardStatePath: os.Getenv("QUALITY_GUARD_STATE_FILE"), QualityGuardConfigPath: os.Getenv("QUALITY_GUARD_RUNTIME_CONFIG_FILE"), Updates: updateService})
+	router := httpserver.New(httpserver.Dependencies{Logger: logger, RequestTimeout: cfg.Server.RequestTimeout.Value(), MaxBodyBytes: cfg.Server.MaxBodyBytes, ConcurrencyGate: inferenceConcurrency, SecureCookies: cfg.Auth.SecureCookies, SwaggerEnabled: cfg.Server.SwaggerEnabled, PublicAPIBaseURL: cfg.Frontend.EffectivePublicAPIBaseURL(), FrontendStaticPath: cfg.Frontend.StaticPath, Readiness: readiness, TrafficReady: startup.acceptsTraffic, AdminAuth: adminService, Accounts: accountService, AccountSync: accountSyncService, Models: modelService, ClientKeys: clientKeyService, Audits: auditService, Dashboard: dashboardService, Gateway: gatewayService, Media: mediaService, Settings: settingsService, Egress: egressService, QualityGuardStatePath: os.Getenv("QUALITY_GUARD_STATE_FILE"), QualityGuardConfigPath: os.Getenv("QUALITY_GUARD_RUNTIME_CONFIG_FILE"), Updates: updateService, AdminManagementKey: cfg.Auth.ManagementKey})
 	server := &http.Server{Addr: cfg.Server.Listen, Handler: router, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: cfg.Server.ReadTimeout.Value(), IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10}
 	return &Application{
 		logger: logger, database: database, server: server,
@@ -423,6 +425,13 @@ func accountAutoCleanConfig(value config.AccountsConfig) accountapp.AutoCleanCon
 		MinAge:          value.AutoCleanReauthMinAge.Value(),
 		IncludeDisabled: value.AutoCleanIncludeDisabled,
 	}
+}
+
+func accountAutoDisableBuildBotConfig(value config.AccountsConfig) accountapp.AutoDisableBuildBotConfig {
+	return accountapp.AutoDisableBuildBotConfig{
+		Enabled:  value.AutoDisableBuildBotEnabled,
+		Interval: value.AutoDisableBuildBotInterval.Value(),
+  }
 }
 
 func auditLedgerConfig(value config.AuditConfig) auditapp.LedgerConfig {
@@ -530,6 +539,10 @@ func (a *Application) Run(ctx context.Context) error {
 	})
 	startBackground("account_auto_clean", func(taskCtx context.Context) error {
 		a.accounts.RunAccountAutoClean(taskCtx)
+		return nil
+	})
+	startBackground("account_auto_disable_bot", func(taskCtx context.Context) error {
+		a.accounts.RunAutoDisableBuildBot(taskCtx)
 		return nil
 	})
 	startBackground("statsig_warmup", func(taskCtx context.Context) error {

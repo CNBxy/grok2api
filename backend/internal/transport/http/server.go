@@ -63,6 +63,8 @@ type Dependencies struct {
 	QualityGuardStatePath  string
 	QualityGuardConfigPath string
 	Updates                *updatecheckapp.Service
+  // AdminManagementKey 可选的静态管理密钥，用于机器间认证（替代 JWT）。
+	AdminManagementKey string
 }
 
 type ReadinessComponent struct {
@@ -141,7 +143,7 @@ func New(deps Dependencies) *gin.Engine {
 	authHandler := adminauthhttp.NewHandler(deps.AdminAuth, deps.SecureCookies)
 	authHandler.RegisterPublic(adminRoot)
 	adminProtected := adminRoot.Group("")
-	adminProtected.Use(middleware.AdminAuth(deps.AdminAuth))
+	adminProtected.Use(middleware.AdminAuthWithManagementKey(deps.AdminAuth, deps.AdminManagementKey))
 	authHandler.RegisterAuthenticated(adminProtected)
 	accounthttp.NewHandler(deps.Accounts, deps.AccountSync).Register(adminProtected)
 	modelhttp.NewHandler(deps.Models).Register(adminProtected)

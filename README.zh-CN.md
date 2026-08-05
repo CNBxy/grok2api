@@ -284,7 +284,25 @@ curl http://127.0.0.1:8000/v1/responses \
 - 按作用域配置无回退、直连或固定节点
 - 代理池模式，单次连接失败不会触发全局冷却
 - 固定代理传输失败后立即复测；同节点复测自动合并，后续绑定请求限时等待并在恢复后快速重试
-- 可选的[出口质量守护程序](./tools/egress-quality-guard/README.zh-CN.md)，支持逐节点模型探测、防误杀隔离和自动恢复
+- 可选的[出口质量守护程序](./tools/egress-quality-guard/README.zh-CN.md)，支持逐节点模型探测、防误杀隔离和自动恢复；通过内置的 `quality-guard` Compose profile 按需启用
+
+首次启用时只需在 `config.yaml` 中增加 `qualityGuard` 并启动 profile。主程序会自动创建并稳定复用不可导出的系统探测身份：
+
+```yaml
+qualityGuard:
+  enabled: true
+  model: "grok-4.5"
+```
+
+```bash
+docker compose --profile quality-guard up -d --build
+```
+
+曾使用预览版 `clientKeyID` 配置的现有部署可以直接升级：该字段会被兼容读取但不再使用，可安全删除；原来手工创建的探测 Key 不会被程序擅自删除。
+
+后续修改该配置时，执行 `docker compose --profile quality-guard restart grok2api egress-quality-guard` 使基础配置重新加载；管理页面中的策略调整仍支持热加载。
+
+普通的 `docker compose up -d` 不会启动守护程序，也不会产生主动探测流量。sidecar 只从主程序获得权限受限的内部凭据，不保存或使用管理员密码。启用自动隔离前请先阅读上面的详细说明。
 
 Resin 用户名支持 `{account}`：
 
@@ -317,9 +335,18 @@ docker compose --profile flaresolverr up -d
 
 多实例需要为每个副本设置唯一的 `deployment.instanceID`，统一使用同一个 `clusterID`；只有媒体目录已正确共享时才设置 `sharedMedia: true`。
 
+PostgreSQL 凭据可以通过环境变量注入，无需写入 `config.yaml`：
+
+```bash
+GROK2API_DATABASE_URL='postgresql://user:password@host:5432/grok2api?sslmode=require' docker compose up -d
+```
+
+非空的 `GROK2API_DATABASE_URL` 会覆盖 `database.postgres.dsn` 并自动选择 `postgres`；空值不会覆盖 YAML。支持 `postgres://` 和 `postgresql://`，SQLAlchemy 的 `postgresql+asyncpg://` 会返回格式迁移提示。程序不会隐式读取通用的 `DATABASE_URL`；平台只提供该变量时，可在部署清单中显式映射为 `GROK2API_DATABASE_URL: "${DATABASE_URL}"`。数据库配置优先级为：内置默认值 < `config.yaml` < `GROK2API_DATABASE_URL`。当前 CLI 没有数据库覆盖参数。
+
 重要的可选设置：
 
 - `audit.ledgerMode`：`observe` 仅报告账本故障；`enforce` 可暂停新推理以保护计费准确性。
+- `routing.accountIsolatedConnections`：为外部 L4 或按连接哈希的负载均衡器按账号拆分出站 TCP/HTTP 连接池。默认关闭，因为会增加连接数、TLS 握手、内存和文件描述符占用。
 - `routing.segmentedSelectorEnabled`：用于大型账号池，同时保留完整选号回退与原子门禁。
 - Build 响应头超时和精确匹配的 403 失效规则支持热加载。
 - “同步最新版本”可应用已验证的 Grok Build 客户端版本和 User-Agent。

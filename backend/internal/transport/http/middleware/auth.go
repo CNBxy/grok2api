@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"crypto/subtle"
 	"errors"
 	"net/http"
 	"strings"
@@ -60,6 +61,19 @@ func adminAuthWithManagementKey(service *adminauth.Service, managementKey string
 			return
 		}
 		c.Set(AdminKey, value)
+		c.Next()
+	}
+}
+
+// QualityGuardAuth accepts only the process-scoped token shared with the
+// quality-guard sidecar. It is intentionally separate from administrator JWTs.
+func QualityGuardAuth(expected string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		raw, ok := bearerToken(c.GetHeader("Authorization"))
+		if !ok || len(raw) != len(expected) || subtle.ConstantTimeCompare([]byte(raw), []byte(expected)) != 1 {
+			response.Error(c, http.StatusUnauthorized, "qualityGuardUnauthorized", "质量守护内部认证失败")
+			return
+		}
 		c.Next()
 	}
 }

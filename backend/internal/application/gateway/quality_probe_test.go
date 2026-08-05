@@ -1,6 +1,28 @@
 package gateway
 
-import "testing"
+import (
+	"errors"
+	"testing"
+
+	egressapp "github.com/chenyme/grok2api/backend/internal/application/egress"
+)
+
+func TestQualityProbeSelectionFailureCanBeIdentifiedByCaller(t *testing.T) {
+	err := normalizeQualityProbeRequestError(errors.Join(ErrNoAvailableAccount, &SelectionUnavailableError{Reason: SelectionCooling}))
+	if !errors.Is(err, egressapp.ErrQualityProbeNoAccount) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestQualityProbeModelIsPinnedToBuildNamespace(t *testing.T) {
+	got, ok := qualityProbeBuildPublicModel("grok-shared")
+	if !ok || got != "Build/grok-shared" {
+		t.Fatalf("Build probe model = %q, valid=%v", got, ok)
+	}
+	if _, ok := qualityProbeBuildPublicModel("Console/grok-shared"); ok {
+		t.Fatal("quality probe must reject an explicitly non-Build model")
+	}
+}
 
 func TestQualityProbeOutputTokensPerSecondMatchesAuditPanel(t *testing.T) {
 	got := qualityProbeOutputTokensPerSecond(1335, 17320, 17100)

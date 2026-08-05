@@ -133,4 +133,8 @@ type AccountsConfig struct {
 	AutoCleanReauthMinAge time.Duration
 	// AutoCleanIncludeDisabled 为 true 时，reauth 清理时包含 enabled=false 的账号。
 	AutoCleanIncludeDisabled bool
+	// AutoDisableBuildBotEnabled 为 true 时，周期性停用已被风控的 Grok Build 账号，并启用已解封账号。
+	AutoDisableBuildBotEnabled bool
+	// AutoDisableBuildBotInterval 自动停用/启用风控账号的扫描间隔。
+	AutoDisableBuildBotInterval time.Duration
 }

@@ -105,6 +105,47 @@ func TestSyncAccountIdentityUsesWebSessionWithConsoleCredential(t *testing.T) {
 	}
 }
 
+func TestNormalizeRequestDropsClientWebSearchFunctionWhenHostedSearchInjected(t *testing.T) {
+	// Hermes and similar agents declare a client-side function named web_search.
+	// Console SearchTools models also inject hosted {"type":"web_search"}.
+	// xAI rejects that pair with HTTP 400 "Duplicate tool names: web_search".
+	spec, ok := Resolve("grok-4.3")
+	if !ok {
+		t.Fatal("grok-4.3 missing")
+	}
+	body, err := normalizeRequest([]byte(`{
+		"model":"grok-4.3",
+		"tools":[
+			{"type":"function","name":"web_search","description":"Hermes web search","parameters":{"type":"object","properties":{"query":{"type":"string"}}}},
+			{"type":"function","name":"lookup","parameters":{"type":"object"}},
+			{"type":"function","name":"x_search","parameters":{"type":"object"}}
+		],
+		"tool_choice":{"type":"function","name":"web_search"}
+	}`), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	tools, _ := payload["tools"].([]any)
+	if len(tools) != 3 {
+		t.Fatalf("tools = %#v, want hosted web_search + x_search + function:lookup", tools)
+	}
+	if toolIdentity(tools[0]) != "web_search" || toolIdentity(tools[1]) != "x_search" || toolIdentity(tools[2]) != "function:lookup" {
+		t.Fatalf("tools = %#v", tools)
+	}
+	for _, raw := range tools {
+		if name, ok := clientFunctionName(raw); ok && isHostedSearchToolName(name) {
+			t.Fatalf("client function %q should have been dropped: %#v", name, tools)
+		}
+	}
+	if payload["tool_choice"] != "auto" {
+		t.Fatalf("tool_choice = %#v, want auto after dropping targeted web_search function", payload["tool_choice"])
+	}
+}
+
 func TestNormalizeRequestAppliesConsoleContract(t *testing.T) {
 	spec, ok := Resolve("grok-4.3")
 	if !ok {

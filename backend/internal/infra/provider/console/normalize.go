@@ -39,9 +39,6 @@ func normalizeRequest(body []byte, spec ModelSpec) ([]byte, error) {
 	normalizeReasoning(payload, spec)
 	ensureReasoningInclude(payload)
 	retainedClientTools := normalizeConsoleTools(payload)
-	if spec.SearchTools {
-		mergeSearchTools(payload)
-	}
 	normalizeConsoleToolChoice(payload, retainedClientTools)
 	return json.Marshal(payload)
 }
@@ -208,6 +205,8 @@ func ensureReasoningInclude(payload map[string]any) {
 func normalizeConsoleTools(payload map[string]any) bool {
 	value, exists := payload["tools"]
 	if !exists || value == nil {
+		delete(payload, "tools")
+		delete(payload, "tool_choice")
 		return false
 	}
 	tools, ok := value.([]any)
@@ -269,126 +268,18 @@ func normalizeConsoleTools(payload map[string]any) bool {
 	}
 	if len(result) == 0 {
 		delete(payload, "tools")
+		delete(payload, "tool_choice")
 		return false
 	}
 	payload["tools"] = result
 	return retainedClientTools
 }
 
-func mergeSearchTools(payload map[string]any) {
-	defaults := []any{
-		map[string]any{"type": "web_search", "enable_image_understanding": true},
-		map[string]any{"type": "x_search", "enable_video_understanding": true},
-	}
-	positions := map[string]int{"web_search": 0, "x_search": 1}
-	result := append([]any(nil), defaults...)
-	droppedHostedFunctionNames := map[string]struct{}{}
-	if value, exists := payload["tools"]; exists && value != nil {
-		tools, _ := value.([]any)
-		for _, tool := range tools {
-			// SearchTools models always expose hosted web_search/x_search.
-			// Drop client function tools that reuse those names so upstream
-			// does not reject the request with "Duplicate tool names".
-			// Agents such as Hermes declare a client-side web_search function;
-			// Console chat only uses the hosted type, so this is a no-op there.
-			if name, ok := clientFunctionName(tool); ok && isHostedSearchToolName(name) {
-				droppedHostedFunctionNames[strings.ToLower(name)] = struct{}{}
-				continue
-			}
-			identity := toolIdentity(tool)
-			if index, exists := positions[identity]; identity != "" && exists {
-				result[index] = tool
-				continue
-			}
-			if identity != "" {
-				positions[identity] = len(result)
-			}
-			result = append(result, tool)
-		}
-	}
-	payload["tools"] = result
-	if _, exists := payload["tool_choice"]; !exists {
-		payload["tool_choice"] = "auto"
-	}
-	clearToolChoiceForDroppedFunctions(payload, droppedHostedFunctionNames)
-}
-
-// isHostedSearchToolName reports whether name is reserved by xAI hosted search tools.
-func isHostedSearchToolName(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "web_search", "x_search":
-		return true
-	default:
-		return false
-	}
-}
-
-func hasHostedSearchTool(tools []any, name string) bool {
-	want := strings.ToLower(strings.TrimSpace(name))
-	for _, raw := range tools {
-		tool, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		typeName, _ := tool["type"].(string)
-		if strings.ToLower(strings.TrimSpace(typeName)) == want {
-			return true
-		}
-	}
-	return false
-}
-
-func clientFunctionName(value any) (string, bool) {
-	tool, ok := value.(map[string]any)
-	if !ok {
-		return "", false
-	}
-	typeName, _ := tool["type"].(string)
-	if strings.ToLower(strings.TrimSpace(typeName)) != "function" {
-		return "", false
-	}
-	name, _ := tool["name"].(string)
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return "", false
-	}
-	return name, true
-}
-
-// clearToolChoiceForDroppedFunctions rewrites tool_choice to auto when it
-// targeted a client function that was stripped to avoid hosted-name collisions.
-func clearToolChoiceForDroppedFunctions(payload map[string]any, dropped map[string]struct{}) {
-	if len(dropped) == 0 {
-		return
-	}
-	choice, exists := payload["tool_choice"]
-	if !exists {
-		return
-	}
-	object, ok := choice.(map[string]any)
-	if !ok {
-		return
-	}
-	typeName, _ := object["type"].(string)
-	if typeName != "function" {
-		return
-	}
-	name, _ := object["name"].(string)
-	if strings.TrimSpace(name) == "" {
-		if function, ok := object["function"].(map[string]any); ok {
-			name, _ = function["name"].(string)
-		}
-	}
-	name = strings.ToLower(strings.TrimSpace(name))
-	if name == "" {
-		return
-	}
-	if _, hit := dropped[name]; hit {
-		payload["tool_choice"] = "auto"
-	}
-}
-
 func normalizeConsoleToolChoice(payload map[string]any, retainedClientTools bool) {
+	if _, exists := payload["tools"]; !exists {
+		delete(payload, "tool_choice")
+		return
+	}
 	choice, exists := payload["tool_choice"]
 	if !exists {
 		payload["tool_choice"] = "auto"

@@ -15,6 +15,7 @@ import (
 
 type Config struct {
 	BaseURL             string
+	ClientVersion       string
 	StatsigMode         string
 	StatsigManualValue  string
 	StatsigSignerURL    string

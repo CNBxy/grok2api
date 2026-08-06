@@ -5,9 +5,11 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/chenyme/grok2api/backend/internal/application/adminauth"
 	clientkeyapp "github.com/chenyme/grok2api/backend/internal/application/clientkey"
+	admindomain "github.com/chenyme/grok2api/backend/internal/domain/admin"
 	"github.com/chenyme/grok2api/backend/internal/shared/response"
 	"github.com/gin-gonic/gin"
 )
@@ -19,12 +21,36 @@ const (
 
 // AdminAuth 校验管理员 Bearer JWT。
 func AdminAuth(service *adminauth.Service) gin.HandlerFunc {
+	return adminAuthWithManagementKey(service, "")
+}
+
+// AdminAuthWithManagementKey 校验管理员 Bearer JWT 或 Management Key。
+// 当 managementKey 非空时，支持通过 Authorization: Bearer <managementKey> 直接认证。
+func AdminAuthWithManagementKey(service *adminauth.Service, managementKey string) gin.HandlerFunc {
+	return adminAuthWithManagementKey(service, managementKey)
+}
+
+func adminAuthWithManagementKey(service *adminauth.Service, managementKey string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		raw, ok := bearerToken(c.GetHeader("Authorization"))
 		if !ok {
 			response.Error(c, http.StatusUnauthorized, "adminUnauthorized", "管理员登录已失效")
 			return
 		}
+
+		// Management Key 认证（优先级高）
+		if managementKey != "" && raw == managementKey {
+			c.Set(AdminKey, admindomain.Admin{
+				ID:       0,
+				Username: "management",
+				CreatedAt: time.Now().UTC(),
+				UpdatedAt: time.Now().UTC(),
+			})
+			c.Next()
+			return
+		}
+
+		// 标准 JWT 认证
 		value, err := service.AuthenticateAccess(c.Request.Context(), raw)
 		if err != nil {
 			if errors.Is(err, adminauth.ErrRuntimeUnavailable) {

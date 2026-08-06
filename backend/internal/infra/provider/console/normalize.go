@@ -238,19 +238,10 @@ func normalizeConsoleTools(payload map[string]any) bool {
 			result = append(result, clean)
 		case "function":
 			name, _ := tool["name"].(string)
-			name = strings.TrimSpace(name)
-			if name == "" {
+			if strings.TrimSpace(name) == "" {
 				continue
 			}
-			// xAI Responses treats hosted tool types and function tools as one
-			// name space. A client function literally named web_search/x_search
-			// collides with a hosted {"type":"web_search"} already present in
-			// this request and yields HTTP 400 "Duplicate tool names". Prefer
-			// the hosted tool when both are declared.
-			if isHostedSearchToolName(name) && hasHostedSearchTool(result, name) {
-				continue
-			}
-			clean := map[string]any{"type": "function", "name": name}
+			clean := map[string]any{"type": "function", "name": strings.TrimSpace(name)}
 			for _, field := range []string{"description", "parameters", "strict"} {
 				if fieldValue, exists := tool[field]; exists {
 					clean[field] = fieldValue

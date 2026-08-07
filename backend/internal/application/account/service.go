@@ -169,11 +169,12 @@ type QuotaView struct {
 }
 
 type View struct {
-	Credential      accountdomain.Credential
-	Billing         *accountdomain.Billing
-	Quota           QuotaView
-	QuotaWindows    []accountdomain.QuotaWindow
-	BuildBotFlagged bool
+	Credential         accountdomain.Credential
+	Billing            *accountdomain.Billing
+	Quota              QuotaView
+	QuotaWindows       []accountdomain.QuotaWindow
+	BuildBotFlagged    bool
+	BuildBotFlagSource int
 }
 
 type UpdateInput struct {
@@ -569,7 +570,7 @@ func (s *Service) List(ctx context.Context, page, pageSize int, search string, f
 	views := make([]View, 0, len(values))
 	for _, value := range values {
 		metadata := s.credentialMetadata(value)
-		view := View{Credential: value, BuildBotFlagged: metadata.BuildBotFlagged}
+		view := View{Credential: value, BuildBotFlagged: metadata.BuildBotFlagged, BuildBotFlagSource: metadata.BuildBotFlagSource}
 		if billing, ok := billings[value.ID]; ok {
 			view.Billing = &billing
 		}
@@ -934,7 +935,7 @@ func (s *Service) Get(ctx context.Context, id uint64) (View, error) {
 		return View{}, mapRepositoryError(err)
 	}
 	metadata := s.credentialMetadata(value)
-	view := View{Credential: value, BuildBotFlagged: metadata.BuildBotFlagged}
+	view := View{Credential: value, BuildBotFlagged: metadata.BuildBotFlagged, BuildBotFlagSource: metadata.BuildBotFlagSource}
 	if billing, err := s.accounts.GetBilling(ctx, id); err == nil {
 		view.Billing = &billing
 	} else if !errors.Is(err, repository.ErrNotFound) {

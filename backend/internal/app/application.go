@@ -254,7 +254,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	accountService := accountapp.NewService(accountRepo, auditRepo, deviceSessions, sticky, providers, cipher, refreshLock)
 	cliAdapter.SetFallbackMarker(accountService)
 	accountService.SetLogger(logger)
+	accountService.SetOperationLogRepository(relational.NewAccountOperationLogRepository(database))
 	accountService.UpdateAutoCleanConfig(accountAutoCleanConfig(cfg.Accounts))
+	accountService.UpdateAutoDisableBuildBotConfig(accountAutoDisableBuildBotConfig(cfg.Accounts))
 	accountService.SetConcurrencyLimiter(concurrency)
 	accountService.SetQuotaRecoveryQueue(quotaQueue)
 	accountService.SetQuotaRefreshCoordinator(quotaRefreshState)
@@ -398,6 +400,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		auditService.UpdateLedgerConfig(auditLedgerConfig(next.Audit))
 		clientKeyService.UpdateDefaults(next.ClientKeyDefaults.RPMLimit, next.ClientKeyDefaults.MaxConcurrent)
 		accountService.UpdateAutoCleanConfig(accountAutoCleanConfig(next.Accounts))
+		accountService.UpdateAutoDisableBuildBotConfig(accountAutoDisableBuildBotConfig(next.Accounts))
 	})
 	updateService := updatecheckapp.NewService(buildinfo.CurrentVersion(), nil)
 
@@ -413,7 +416,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 			MaxOutputTokens: cfg.QualityGuard.MaxOutputTokens,
 		}
 	}
-	router := httpserver.New(httpserver.Dependencies{Logger: logger, RequestTimeout: cfg.Server.RequestTimeout.Value(), MaxBodyBytes: cfg.Server.MaxBodyBytes, ConcurrencyGate: inferenceConcurrency, SecureCookies: cfg.Auth.SecureCookies, SwaggerEnabled: cfg.Server.SwaggerEnabled, PublicAPIBaseURL: cfg.Frontend.EffectivePublicAPIBaseURL(), FrontendStaticPath: cfg.Frontend.StaticPath, Readiness: readiness, TrafficReady: startup.acceptsTraffic, AdminAuth: adminService, Accounts: accountService, AccountSync: accountSyncService, Models: modelService, ClientKeys: clientKeyService, Audits: auditService, Dashboard: dashboardService, Gateway: gatewayService, Media: mediaService, Settings: settingsService, Egress: egressService, QualityGuardStatePath: qualityGuardPath("state.json"), QualityGuardConfigPath: qualityGuardPath("runtime-config.json"), QualityGuardToken: qualityGuardToken, QualityGuardProbe: qualityGuardProbe, Updates: updateService})
+	router := httpserver.New(httpserver.Dependencies{Logger: logger, RequestTimeout: cfg.Server.RequestTimeout.Value(), MaxBodyBytes: cfg.Server.MaxBodyBytes, ConcurrencyGate: inferenceConcurrency, SecureCookies: cfg.Auth.SecureCookies, SwaggerEnabled: cfg.Server.SwaggerEnabled, PublicAPIBaseURL: cfg.Frontend.EffectivePublicAPIBaseURL(), FrontendStaticPath: cfg.Frontend.StaticPath, Readiness: readiness, TrafficReady: startup.acceptsTraffic, AdminAuth: adminService, Accounts: accountService, AccountSync: accountSyncService, Models: modelService, ClientKeys: clientKeyService, Audits: auditService, Dashboard: dashboardService, Gateway: gatewayService, Media: mediaService, Settings: settingsService, Egress: egressService, QualityGuardStatePath: qualityGuardPath("state.json"), QualityGuardConfigPath: qualityGuardPath("runtime-config.json"), QualityGuardToken: qualityGuardToken, QualityGuardProbe: qualityGuardProbe, Updates: updateService, AdminManagementKey: cfg.Auth.ManagementKey})
 	server := &http.Server{Addr: cfg.Server.Listen, Handler: router, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: cfg.Server.ReadTimeout.Value(), IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10}
 	return &Application{
 		logger: logger, database: database, server: server,
@@ -468,6 +471,13 @@ func accountAutoCleanConfig(value config.AccountsConfig) accountapp.AutoCleanCon
 		MinAge:          value.AutoCleanReauthMinAge.Value(),
 		IncludeDisabled: value.AutoCleanIncludeDisabled,
 	}
+}
+
+func accountAutoDisableBuildBotConfig(value config.AccountsConfig) accountapp.AutoDisableBuildBotConfig {
+	return accountapp.AutoDisableBuildBotConfig{
+		Enabled:  value.AutoDisableBuildBotEnabled,
+		Interval: value.AutoDisableBuildBotInterval.Value(),
+  }
 }
 
 func auditLedgerConfig(value config.AuditConfig) auditapp.LedgerConfig {
@@ -575,6 +585,10 @@ func (a *Application) Run(ctx context.Context) error {
 	})
 	startBackground("account_auto_clean", func(taskCtx context.Context) error {
 		a.accounts.RunAccountAutoClean(taskCtx)
+		return nil
+	})
+	startBackground("account_auto_disable_bot", func(taskCtx context.Context) error {
+		a.accounts.RunAutoDisableBuildBot(taskCtx)
 		return nil
 	})
 	startBackground("statsig_warmup", func(taskCtx context.Context) error {

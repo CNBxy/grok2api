@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"math/rand/v2"
+	"runtime"
 	"net/http"
 	"slices"
 	"strconv"
@@ -278,6 +279,14 @@ type BuildConversionResult struct {
 	BuildAccountIDs []uint64
 }
 
+type SSOConversionResult struct {
+	Created   bool   `json:"created"`
+	Linked    bool   `json:"linked"`
+	AccountID uint64 `json:"accountId,string"`
+	Name      string `json:"name"`
+	Email     string `json:"email"`
+}
+
 type ListFilter struct {
 	Provider  string
 	QuotaType string
@@ -352,6 +361,7 @@ func (s *Service) Summary(ctx context.Context) (Summary, error) {
 // Service 负责 OAuth 账号接入、刷新、额度和持久化生命周期。
 type Service struct {
 	accounts            repository.AccountRepository
+  operationLogs         repository.AccountOperationLogRepository
 	audits              repository.AuditRepository
 	deviceSessions      repository.DeviceSessionRepository
 	sticky              repository.StickySessionRepository
@@ -384,9 +394,11 @@ type Service struct {
 	autoClean             AutoCleanConfig
 	autoCleanRevision     uint64
 	autoCleanWake         chan struct{}
-	buildBotFlagCache     *resultcache.Cache[string, []uint64]
-	logger                *slog.Logger
-	now                   func() time.Time
+	buildBotFlagCache         *resultcache.Cache[string, []uint64]
+	autoDisableBuildBot       AutoDisableBuildBotConfig
+	autoDisableBuildBotRevision uint64
+	logger                    *slog.Logger
+	now                       func() time.Time
 }
 
 func (s *Service) SetQuotaRecoveryQueue(queue repository.QuotaRecoveryQueue) {
@@ -441,6 +453,9 @@ func NewService(accounts repository.AccountRepository, audits repository.AuditRe
 		},
 		autoCleanWake:     make(chan struct{}, 1),
 		buildBotFlagCache: resultcache.New[string, []uint64](1, buildBotFlagCacheTTL),
+    autoDisableBuildBot: AutoDisableBuildBotConfig{
+			Enabled: false, Interval: 10 * time.Minute,
+		},
 		conversionPool:    batch.NewPool(25), syncPool: batch.NewPool(25), refreshPool: batch.NewPool(25), detectPool: batch.NewPool(32),
 		logger: slog.Default(),
 		now:    func() time.Time { return time.Now().UTC() },
@@ -1766,7 +1781,7 @@ func (s *Service) convertWebAccountToBuild(ctx context.Context, id uint64, strat
 		if errors.Is(err, provider.ErrUnauthorized) {
 			err = errors.Join(err, s.markSSOCredentialRejected(ctx, value, "Grok Web SSO credential rejected"))
 		}
-		return 0, false, false, err
+		return 0, false, false, withLocation(err)
 	}
 	seed.Provider = accountdomain.ProviderBuild
 	seed.AuthType = accountdomain.AuthTypeOAuth
@@ -1775,15 +1790,61 @@ func (s *Service) convertWebAccountToBuild(ctx context.Context, id uint64, strat
 	}
 	buildAccount, created, err := s.persistSeed(ctx, seed)
 	if err != nil {
-		return 0, false, false, err
+		return 0, false, false, withLocation(err)
 	}
 	if value.LinkedAccountID != 0 && buildAccount.ID != value.LinkedAccountID {
-		return 0, false, false, fmt.Errorf("重新转换后的 Grok Build 账号身份不一致")
+		return 0, false, false, withLocation(fmt.Errorf("重新转换后的 Grok Build 账号身份不一致"))
 	}
 	if err := s.accounts.LinkWebToBuild(ctx, id, buildAccount.ID); err != nil {
 		return 0, false, false, mapRepositoryError(err)
 	}
 	return buildAccount.ID, created, false, nil
+}
+
+// ConvertSSOToBuild 使用裸 SSO token 直接执行 Device Flow 转换为 Grok Build 账号。
+// 调用前需确保 SSO 已先导入 Grok Web（ProviderWeb + AuthTypeSSO）。
+// 通过 UpsertByIdentity 查找已有 Web 账号，再走标准转换路径（与批量转换对齐）。
+func (s *Service) ConvertSSOToBuild(ctx context.Context, ssoToken, email, name string) (SSOConversionResult, error) {
+	if ssoToken = strings.TrimSpace(ssoToken); ssoToken == "" {
+		return SSOConversionResult{}, invalidInput("SSO token 不能为空")
+	}
+	webEmail := strings.TrimSpace(email)
+	if webEmail == "" {
+		return SSOConversionResult{}, invalidInput("email 不能为空")
+	}
+
+	webSeed := provider.CredentialSeed{
+		Provider:    accountdomain.ProviderWeb,
+		AuthType:    accountdomain.AuthTypeSSO,
+		AccessToken: ssoToken,
+		Name:        strings.TrimSpace(name),
+		Email:       webEmail,
+	}
+	webAccount, created, err := s.persistSeed(ctx, webSeed)
+	if err != nil {
+		return SSOConversionResult{}, withLocation(err)
+	}
+	if created {
+		return SSOConversionResult{}, fmt.Errorf("SSO 转换失败：未找到已导入的 Grok Web 账号 (email=%s)", webEmail)
+	}
+
+	buildID, created, _, err := s.convertWebAccountToBuild(ctx, webAccount.ID, BuildConversionAll)
+	if err != nil {
+		return SSOConversionResult{}, withLocation(err)
+	}
+
+	buildAccount, err := s.accounts.Get(ctx, buildID)
+	if err != nil {
+		return SSOConversionResult{}, mapRepositoryError(err)
+	}
+
+	result := SSOConversionResult{AccountID: buildAccount.ID, Name: buildAccount.Name, Email: buildAccount.Email}
+	if created {
+		result.Created = true
+	} else {
+		result.Linked = true
+	}
+	return result, nil
 }
 
 // ExportCredentials 保留 Grok Build 默认导出语义，供旧调用方兼容。
@@ -2117,6 +2178,8 @@ type ensureCredentialOptions struct {
 	bypassCooldown     bool
 	respectSchedule    bool
 	retryPermanentOnce bool
+	// trigger 非空时，在真实上游 RefreshCredential 成功/失败后写入操作日志。
+	trigger accountdomain.OperationTrigger
 }
 
 func (s *Service) ensureCredential(ctx context.Context, value accountdomain.Credential, options ensureCredentialOptions) (accountdomain.Credential, error) {
@@ -2201,10 +2264,12 @@ func (s *Service) ensureCredential(ctx context.Context, value accountdomain.Cred
 		if !ok {
 			return nil, fmt.Errorf("Provider %s 未注册", latest.Provider)
 		}
+		startedAt := currentTime
 		refreshed, err := adapter.RefreshCredential(ctx, latest)
 		if err != nil {
 			persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), credentialRefreshStateTTL)
 			s.recordCredentialRefreshFailure(persistCtx, latest, err, !options.retryPermanentOnce)
+			s.recordCredentialRefreshResult(persistCtx, latest, options.trigger, startedAt, err)
 			cancel()
 			return nil, err
 		}
@@ -2215,6 +2280,7 @@ func (s *Service) ensureCredential(ctx context.Context, value accountdomain.Cred
 		s.invalidateBuildBotFlagCache()
 		s.markRefreshSuccess(latest.ID, currentTime)
 		s.WakeCredentialRefresh()
+		s.recordCredentialRefreshResult(ctx, updated, options.trigger, startedAt, nil)
 		return updated, nil
 	})
 	if err != nil {
@@ -2256,7 +2322,9 @@ func (s *Service) RefreshToken(ctx context.Context, id uint64) (View, error) {
 	if err != nil {
 		return View{}, mapRepositoryError(err)
 	}
-	if _, err := s.ensureCredential(ctx, value, ensureCredentialOptions{force: true, bypassCooldown: true, retryPermanentOnce: true}); err != nil {
+	if _, err := s.ensureCredential(ctx, value, ensureCredentialOptions{
+		force: true, bypassCooldown: true, retryPermanentOnce: true, trigger: accountdomain.OperationTriggerManual,
+	}); err != nil {
 		return View{}, err
 	}
 	return s.Get(ctx, id)
@@ -2454,13 +2522,21 @@ func (s *Service) RefreshBilling(ctx context.Context, id uint64) (accountdomain.
 }
 
 func (s *Service) refreshBilling(ctx context.Context, id uint64) (accountdomain.Billing, error) {
+	startedAt := s.now().UTC()
 	value, billing, err := s.fetchAndSaveBilling(ctx, id)
 	if err != nil {
+		if value.ID != 0 {
+			s.recordQuotaSyncResult(ctx, value, startedAt, err)
+		} else if loaded, getErr := s.accounts.Get(ctx, id); getErr == nil {
+			s.recordQuotaSyncResult(ctx, loaded, startedAt, err)
+		}
 		return accountdomain.Billing{}, err
 	}
 	if err := s.reconcilePaidQuotaRecovery(ctx, value, billing, false); err != nil {
+		s.recordQuotaSyncResult(ctx, value, startedAt, err)
 		return accountdomain.Billing{}, err
 	}
+	s.recordQuotaSyncResult(ctx, value, startedAt, nil)
 	return billing, nil
 }
 
@@ -2632,28 +2708,35 @@ func (s *Service) refreshQuota(ctx context.Context, id uint64) (quotaRefreshResu
 	if err != nil {
 		return quotaRefreshResult{}, mapRepositoryError(err)
 	}
+	startedAt := s.now().UTC()
 	adapter, ok := s.providers.Quota(value.Provider)
 	if !ok {
-		return quotaRefreshResult{}, fmt.Errorf("%s Quota Provider 未注册", value.Provider)
+		err := fmt.Errorf("%s Quota Provider 未注册", value.Provider)
+		s.recordQuotaSyncResult(ctx, value, startedAt, err)
+		return quotaRefreshResult{}, err
 	}
 	snapshot, err := adapter.SyncQuota(ctx, value)
 	if err != nil {
 		if errors.Is(err, provider.ErrUnauthorized) {
 			err = errors.Join(err, s.markSSOCredentialRejected(ctx, value, fmt.Sprintf("%s SSO credential rejected", value.Provider)))
 		}
+		s.recordQuotaSyncResult(ctx, value, startedAt, err)
 		return quotaRefreshResult{}, err
 	}
 	quotaKind, _ := s.providers.QuotaKind(value.Provider)
 	if quotaKind == provider.QuotaLocalWindow {
 		existing, loadErr := s.accounts.GetQuotaWindows(ctx, []uint64{id})
 		if loadErr != nil {
+			s.recordQuotaSyncResult(ctx, value, startedAt, loadErr)
 			return quotaRefreshResult{}, loadErr
 		}
 		snapshot.Windows = preserveActiveQuotaWindows(existing[id], snapshot.Windows, s.now())
 	}
 	if err := s.accounts.ReplaceQuotaWindows(ctx, id, snapshot.Tier, snapshot.SyncedAt, snapshot.Windows); err != nil {
-		return quotaRefreshResult{}, err
+		s.recordQuotaSyncResult(ctx, value, startedAt, err)
+    return quotaRefreshResult{}, err
 	}
+  s.recordQuotaSyncResult(ctx, value, startedAt, nil)
 	return quotaRefreshResult{Credential: value, Windows: snapshot.Windows}, nil
 }
 
@@ -3460,6 +3543,7 @@ func (s *Service) syncAllQuotasWithProgress(ctx context.Context, providerValue a
 	if err != nil {
 		return 0, 0, err
 	}
+	ctx = withOperationTrigger(ctx, accountdomain.OperationTriggerBatch)
 	return s.runAccountBatch(ctx, operation, ids, s.syncPool, progress, func(workCtx context.Context, id uint64) error {
 		_, err := s.RefreshQuota(workCtx, id)
 		return err
@@ -3468,6 +3552,7 @@ func (s *Service) syncAllQuotasWithProgress(ctx context.Context, providerValue a
 
 // SyncWebQuotaAccounts 同步指定 Web 账号集合，供启动追赶任务复用共享并发池。
 func (s *Service) SyncWebQuotaAccounts(ctx context.Context, ids []uint64) (int, int, error) {
+	ctx = withOperationTrigger(ctx, accountdomain.OperationTriggerScheduler)
 	return s.runAccountBatch(ctx, "web_quota_startup_catchup", ids, s.syncPool, nil, func(workCtx context.Context, id uint64) error {
 		_, err := s.RefreshWebQuota(workCtx, id)
 		return err
@@ -3506,10 +3591,13 @@ func (s *Service) RefreshAllTokensWithProgress(ctx context.Context, progress Bat
 }
 
 func (s *Service) refreshTokens(ctx context.Context, ids []uint64, progress BatchProgressObserver) (int, int, error) {
+	ctx = withOperationTrigger(ctx, accountdomain.OperationTriggerBatch)
 	return s.runAccountBatch(ctx, "credential_refresh", ids, s.refreshPool, progress, func(workCtx context.Context, id uint64) error {
 		value, err := s.accounts.Get(workCtx, id)
 		if err == nil {
-			_, err = s.ensureCredential(workCtx, value, ensureCredentialOptions{force: true, bypassCooldown: true, retryPermanentOnce: true})
+			_, err = s.ensureCredential(workCtx, value, ensureCredentialOptions{
+				force: true, bypassCooldown: true, retryPermanentOnce: true, trigger: accountdomain.OperationTriggerBatch,
+			})
 		}
 		return err
 	})
@@ -3525,6 +3613,7 @@ func (s *Service) BatchRefreshTokens(ctx context.Context, ids []uint64) (int, in
 	if s.providers == nil {
 		return 0, 0, 0, fmt.Errorf("Provider 注册表未初始化")
 	}
+	ctx = withOperationTrigger(ctx, accountdomain.OperationTriggerBatch)
 	refreshableIDs := make([]uint64, 0, len(values))
 	for _, id := range values {
 		value, getErr := s.accounts.Get(ctx, id)
@@ -3532,6 +3621,16 @@ func (s *Service) BatchRefreshTokens(ctx context.Context, ids []uint64) (int, in
 			return 0, 0, 0, getErr
 		}
 		if !s.providers.SupportsCredentialRefresh(value.Provider) || !value.Enabled || value.EncryptedRefreshToken == "" {
+			reason := "account is not eligible for credential refresh"
+			switch {
+			case !s.providers.SupportsCredentialRefresh(value.Provider):
+				reason = "provider does not support credential refresh"
+			case !value.Enabled:
+				reason = "account is disabled"
+			case value.EncryptedRefreshToken == "":
+				reason = "refresh token is missing"
+			}
+			s.recordSkippedCredentialRefresh(ctx, value, reason)
 			continue
 		}
 		refreshableIDs = append(refreshableIDs, id)
@@ -3547,6 +3646,7 @@ func (s *Service) BatchRefreshBilling(ctx context.Context, ids []uint64) (int, i
 	if err != nil {
 		return 0, 0, err
 	}
+	ctx = withOperationTrigger(ctx, accountdomain.OperationTriggerBatch)
 	return s.refreshBillings(ctx, values, nil)
 }
 
@@ -3960,6 +4060,7 @@ func (s *Service) BatchRefreshQuota(ctx context.Context, ids []uint64) (int, int
 	if err != nil {
 		return 0, 0, err
 	}
+	ctx = withOperationTrigger(ctx, accountdomain.OperationTriggerBatch)
 	return s.runAccountBatch(ctx, "quota_sync", values, s.syncPool, nil, func(workCtx context.Context, id uint64) error {
 		_, err := s.RefreshQuota(workCtx, id)
 		return err
@@ -4104,6 +4205,25 @@ func normalizeIDs(ids []uint64, limit int) ([]uint64, error) {
 // invalidInput 为可安全返回给管理端的账号参数错误附加稳定语义。
 func invalidInput(message string) error {
 	return fmt.Errorf("%w: %s", ErrInvalidInput, message)
+}
+
+// withLocation 为错误附加调用位置的 file:line 信息，用于 SSO→Build 等复杂流程的调试追踪。
+func withLocation(err error) error {
+	if err == nil {
+		return nil
+	}
+	_, file, line, ok := runtime.Caller(1)
+	if !ok {
+		return err
+	}
+	short := file
+	for i := len(file) - 1; i >= 0; i-- {
+		if file[i] == '/' {
+			short = file[i+1:]
+			break
+		}
+	}
+	return fmt.Errorf("%s:%d: %w", short, line, err)
 }
 
 // mapRepositoryError 隔离持久化层错误，避免 transport 依赖仓储实现语义。

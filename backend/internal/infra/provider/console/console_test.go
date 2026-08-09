@@ -161,7 +161,7 @@ func TestNormalizeRequestAppliesConsoleContract(t *testing.T) {
 		t.Fatalf("max_output_tokens = %#v", payload["max_output_tokens"])
 	}
 	reasoning, _ := payload["reasoning"].(map[string]any)
-	if reasoning["effort"] != "xhigh" {
+	if reasoning["effort"] != "xhigh" || reasoning["summary"] != "auto" {
 		t.Fatalf("reasoning = %#v", reasoning)
 	}
 	include, _ := payload["include"].([]any)
@@ -221,7 +221,8 @@ func TestNormalizeRequestPreservesMultiAgentDefaultsWithoutInjectingTools(t *tes
 	if err := json.Unmarshal(body, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["max_output_tokens"] != float64(1_000_000) || payload["reasoning"] != nil || payload["store"] != false {
+	reasoningDefault, _ := payload["reasoning"].(map[string]any)
+	if payload["max_output_tokens"] != float64(1_000_000) || payload["store"] != false || reasoningDefault["summary"] != "auto" || reasoningDefault["effort"] != nil {
 		t.Fatalf("multi-agent defaults = %#v", payload)
 	}
 	include, _ := payload["include"].([]any)
@@ -233,7 +234,11 @@ func TestNormalizeRequestPreservesMultiAgentDefaultsWithoutInjectingTools(t *tes
 		t.Fatal(err)
 	}
 	payload = nil
-	if json.Unmarshal(explicit, &payload) != nil || payload["reasoning"].(map[string]any)["effort"] != "xhigh" {
+	if json.Unmarshal(explicit, &payload) != nil {
+		t.Fatalf("explicit multi-agent effort = %#v", payload)
+	}
+	explicitReasoning, _ := payload["reasoning"].(map[string]any)
+	if explicitReasoning["effort"] != "xhigh" || explicitReasoning["summary"] != "auto" {
 		t.Fatalf("explicit multi-agent effort = %#v", payload)
 	}
 }
@@ -341,8 +346,12 @@ func TestNormalizeRequestStripsUnsupportedGrok420ReasoningEffort(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload = nil
-	if json.Unmarshal(effortOnly, &payload) != nil || payload["reasoning"] != nil {
-		t.Fatalf("effort-only reasoning must be removed: %#v", payload)
+	if err := json.Unmarshal(effortOnly, &payload); err != nil {
+		t.Fatal(err)
+	}
+	effortOnlyReasoning, _ := payload["reasoning"].(map[string]any)
+	if effortOnlyReasoning["effort"] != nil || effortOnlyReasoning["summary"] != "auto" {
+		t.Fatalf("effort-only reasoning should fall back to readable summary: %#v", payload)
 	}
 
 	withoutEffort, err := normalizeRequest([]byte(`{
@@ -356,8 +365,9 @@ func TestNormalizeRequestStripsUnsupportedGrok420ReasoningEffort(t *testing.T) {
 	if err := json.Unmarshal(withoutEffort, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["reasoning"] != nil {
-		t.Fatalf("base model request should retain the upstream default: %#v", payload)
+	reasoningDefault, _ := payload["reasoning"].(map[string]any)
+	if reasoningDefault["summary"] != "auto" || reasoningDefault["effort"] != nil {
+		t.Fatalf("base model request should request readable reasoning summary: %#v", payload)
 	}
 }
 

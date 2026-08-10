@@ -730,9 +730,9 @@ func discoveredRouteDefaults(provider account.Provider, upstreamModel string) (s
 	case account.ProviderWeb:
 		switch upstreamModel {
 		case "grok-imagine-image":
-			return "grok-imagine-image-lite", model.CapabilityImage
+			return "grok-imagine-image-2.0", model.CapabilityImage
 		case "grok-imagine-image-quality":
-			return "grok-imagine-image-quality-lite", model.CapabilityImage
+			return "grok-imagine-image-quality-2.0", model.CapabilityImage
 		case "imagine-image-edit":
 			return "grok-imagine-image-edit", model.CapabilityImageEdit
 		case "imagine-x-1":
@@ -754,7 +754,7 @@ func discoveredRouteDefaults(provider account.Provider, upstreamModel string) (s
 			// Discovery only needs one existing managed capability to remain
 			// idempotent and must never synthesize a Responses route.
 			return upstreamModel, model.CapabilityImage
-		case "grok-imagine-video":
+		case "grok-imagine-video", "grok-imagine-video-1.5":
 			return upstreamModel, model.CapabilityVideo
 		default:
 			return upstreamModel, model.CapabilityResponses

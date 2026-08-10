@@ -333,7 +333,7 @@ curl http://127.0.0.1:8000/v1/responses \
 
 - HTTP、HTTPS、SOCKS4/4A、SOCKS5/5H、Resin、Trojan、VLESS、Shadowsocks 与 VMess
 - 隧道协议支持 TCP、WebSocket 和 TLS，未实现的传输形态会在导入时拒绝
-- 订阅和文本/Base64 导入
+- 订阅和文本/Base64/YAML 导入
 - 批量探测、筛选、删除、分配与均衡
 - 按作用域配置无回退、直连或固定节点
 - 代理池模式，单次连接失败不会触发全局冷却
@@ -341,6 +341,8 @@ curl http://127.0.0.1:8000/v1/responses \
 - 可选的[出口质量守护程序](./tools/egress-quality-guard/README.zh-CN.md)，支持逐节点模型探测、防误杀隔离和自动恢复；通过内置的 `quality-guard` Compose profile 按需启用
 
 Hysteria 与 TUIC 暂未支持。FlareSolverr 仅接受 HTTP/SOCKS 代理地址，因此自动刷新 Clearance 暂不能直接使用隧道分享链接。
+
+订阅同样支持 mihomo/Clash YAML 文档（`proxies:` 节点列表），与明文和 Base64 列表等价。
 
 首次启用时只需在 `config.yaml` 中增加 `qualityGuard` 并启动 profile。主程序会自动创建并稳定复用不可导出的系统探测身份：
 

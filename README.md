@@ -332,7 +332,7 @@ Egress nodes are scoped to Build, Web, Console, or Web assets. The admin console
 
 - HTTP, HTTPS, SOCKS4/4A, SOCKS5/5H, Resin, Trojan, VLESS, Shadowsocks, and VMess
 - TCP, WebSocket, and TLS tunnel transports; unsupported variants are rejected during import
-- Subscription and text/Base64 import
+- Subscription and text/Base64/YAML import
 - Batch probes, filtering, deletion, assignment, and balancing
 - Fallback per scope: none, direct, or a fixed node
 - Proxy-pool mode without global cooldown after one connection failure
@@ -340,6 +340,8 @@ Egress nodes are scoped to Build, Web, Console, or Web assets. The admin console
 - Optional [Egress Quality Guard](./tools/egress-quality-guard/README.md) for active per-node model probes, guarded quarantine, and recovery; enable it with the built-in `quality-guard` Compose profile
 
 Hysteria and TUIC are not supported yet. FlareSolverr accepts only HTTP/SOCKS proxy URLs, so automatic clearance refresh cannot use a tunnel share URL directly.
+
+Subscriptions also accept mihomo/Clash YAML documents (`proxies:` node lists) in addition to plain-text and Base64 lists.
 
 To enable the guard, add a `qualityGuard` section to `config.yaml`, then start
 the profile. The main service creates and reuses a non-exportable system probe

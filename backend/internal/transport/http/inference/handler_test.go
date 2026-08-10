@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -552,8 +553,52 @@ func TestImageEditAcceptsOfficialJSONShape(t *testing.T) {
 	multipartRequest.Header.Set("Content-Type", "multipart/form-data; boundary=test")
 	multipartRecorder := httptest.NewRecorder()
 	router.ServeHTTP(multipartRecorder, multipartRequest)
-	if multipartRecorder.Code != http.StatusUnsupportedMediaType || !strings.Contains(multipartRecorder.Body.String(), "application/json") {
+	// 无效 multipart 体应在解析阶段失败（不再因 Content-Type 直接 415）。
+	if multipartRecorder.Code != http.StatusBadRequest || !strings.Contains(multipartRecorder.Body.String(), "multipart") {
 		t.Fatalf("multipart status=%d body=%s", multipartRecorder.Code, multipartRecorder.Body.String())
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("model", "grok-imagine-image")
+	_ = writer.WriteField("prompt", "make it blue")
+	_ = writer.WriteField("n", "1")
+	_ = writer.WriteField("response_format", "b64_json")
+	_ = writer.WriteField("quality", "auto")
+	part, err := writer.CreateFormFile("image", "ref.png")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	// 最小合法 PNG
+	_, _ = part.Write([]byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+		0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+		0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41,
+		0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+		0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0xfe,
+		0xd4, 0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+		0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+	})
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	validMultipart := httptest.NewRequest(http.MethodPost, "/v1/images/edits", &body)
+	validMultipart.Header.Set("Content-Type", writer.FormDataContentType())
+	validMultipartRecorder := httptest.NewRecorder()
+	router.ServeHTTP(validMultipartRecorder, validMultipart)
+	// 无 API Key 时应越过 Content-Type / 表单解析，进入鉴权 401。
+	if validMultipartRecorder.Code != http.StatusUnauthorized || strings.Contains(validMultipartRecorder.Body.String(), "application/json 或 multipart") {
+		t.Fatalf("valid multipart status=%d body=%s", validMultipartRecorder.Code, validMultipartRecorder.Body.String())
+	}
+
+	plainText := httptest.NewRequest(http.MethodPost, "/v1/images/edits", strings.NewReader("x"))
+	plainText.Header.Set("Content-Type", "text/plain")
+	plainTextRecorder := httptest.NewRecorder()
+	router.ServeHTTP(plainTextRecorder, plainText)
+	if plainTextRecorder.Code != http.StatusUnsupportedMediaType || !strings.Contains(plainTextRecorder.Body.String(), "multipart/form-data") {
+		t.Fatalf("text/plain status=%d body=%s", plainTextRecorder.Code, plainTextRecorder.Body.String())
 	}
 }
 

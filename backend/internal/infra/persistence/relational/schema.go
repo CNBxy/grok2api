@@ -49,6 +49,7 @@ var schemaModels = []any{
 	&mediaAssetModel{},
 	&mediaUploadTicketModel{},
 	&runtimeSettingsModel{},
+	&accountOperationLogModel{},
 }
 
 var schemaIndexes = []string{
@@ -61,6 +62,7 @@ var schemaIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_accounts_created_id ON provider_accounts(created_at DESC, id DESC)",
 	"CREATE INDEX IF NOT EXISTS idx_accounts_auto_clean_reauth ON provider_accounts(auth_status, reauth_marked_at, id)",
 	"CREATE INDEX IF NOT EXISTS idx_accounts_auto_clean_reauth_cursor ON provider_accounts(auth_status, enabled, id, reauth_marked_at)",
+	"CREATE INDEX IF NOT EXISTS idx_account_operation_logs_account_op_finished ON account_operation_logs(account_id, op_type, finished_at DESC, id DESC)",
 	"CREATE INDEX IF NOT EXISTS idx_account_credentials_refresh_due ON account_credentials(refresh_due_at, account_id)",
 	"CREATE INDEX IF NOT EXISTS idx_account_credentials_build_bot_flag ON account_credentials(build_bot_flag_source, account_id)",
 	"CREATE INDEX IF NOT EXISTS idx_quota_windows_due ON account_quota_windows(remaining, reset_at, account_id)",

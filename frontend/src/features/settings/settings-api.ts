@@ -34,6 +34,8 @@ export type SettingsConfigDTO = {
     autoCleanReauthInterval: string;
     autoCleanReauthMinAge: string;
     autoCleanIncludeDisabled: boolean;
+    autoDisableBuildBotEnabled: boolean;
+    autoDisableBuildBotInterval: string;
   };
 };
 
@@ -131,6 +133,8 @@ const settingsConfigValidator = hasShape({
     autoCleanReauthInterval: isString,
     autoCleanReauthMinAge: isString,
     autoCleanIncludeDisabled: isBoolean,
+    autoDisableBuildBotEnabled: isBoolean,
+    autoDisableBuildBotInterval: isString,
   })),
 });
 const defaultAccountsConfig = (): SettingsConfigDTO["accounts"] => ({
@@ -141,6 +145,8 @@ const defaultAccountsConfig = (): SettingsConfigDTO["accounts"] => ({
   autoCleanReauthInterval: "10m",
   autoCleanReauthMinAge: "1h",
   autoCleanIncludeDisabled: false,
+  autoDisableBuildBotEnabled: false,
+  autoDisableBuildBotInterval: "10m",
 });
 function withSettingsDefaults(snapshot: SettingsSnapshotDTO): SettingsSnapshotDTO {
   const accounts = snapshot.config.accounts ?? defaultAccountsConfig();
@@ -179,6 +185,8 @@ function withSettingsDefaults(snapshot: SettingsSnapshotDTO): SettingsSnapshotDT
         autoCleanReauthInterval: accounts.autoCleanReauthInterval || "10m",
         autoCleanReauthMinAge: accounts.autoCleanReauthMinAge || "1h",
         autoCleanIncludeDisabled: accounts.autoCleanIncludeDisabled ?? false,
+        autoDisableBuildBotEnabled: accounts.autoDisableBuildBotEnabled ?? false,
+        autoDisableBuildBotInterval: accounts.autoDisableBuildBotInterval || "10m",
       },
     },
   };

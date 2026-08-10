@@ -134,14 +134,20 @@ func (p *accountSyncPipeline) reportProgress() {
 func (h *Handler) Register(router *gin.RouterGroup) {
 	router.GET("/accounts", h.list)
 	router.GET("/accounts/summary", h.summary)
+	router.GET("/accounts/operation-records", h.listOperationRecords)
 	router.GET("/accounts/export", h.exportCredentials)
 	router.POST("/accounts/export", h.exportSelectedCredentials)
+	router.GET("/accounts/:id/operation-logs", h.listOperationLogs)
 	router.GET("/accounts/:id", h.get)
 	router.POST("/accounts/device/start", h.startDevice)
 	router.POST("/accounts/device/:sessionId/poll", h.pollDevice)
+	router.POST("/accounts/device/sso-to-build", h.convertSSOToBuild)
 	router.POST("/accounts/import", h.importAuth)
+	router.POST("/accounts/import/body", h.importAuthBody)
 	router.POST("/accounts/web/import", h.importWebAuth)
+	router.POST("/accounts/web/import/body", h.importWebAuthBody)
 	router.POST("/accounts/console/import", h.importConsoleAuth)
+	router.POST("/accounts/console/import/body", h.importConsoleAuthBody)
 	router.POST("/accounts/web/convert-to-build", h.convertWebToBuild)
 	router.POST("/accounts/web/sync-to-console", h.syncWebToConsole)
 	router.POST("/accounts/web/run-scripts", h.runWebAccountScripts)
@@ -218,6 +224,13 @@ type buildConversionRequest struct {
 	IDs      []string                           `json:"ids"`
 	All      bool                               `json:"all"`
 	Strategy accountapp.BuildConversionStrategy `json:"strategy"`
+}
+
+
+type ssoConversionRequest struct {
+	SSO   string `json:"sso" binding:"required"`
+	Email string `json:"email"`
+	Name  string `json:"name"`
 }
 
 // detectBuildAccountsRequest 要求显式选择全部账号或提供非空 id 集合。
@@ -327,6 +340,31 @@ type accountResponse struct {
 	QuotaWindows               []quotaWindowResponse   `json:"quotaWindows,omitempty"`
 }
 
+type operationLogResponse struct {
+	ID          string     `json:"id"`
+	OpType      string     `json:"opType"`
+	Success     bool       `json:"success"`
+	StatusCode  int        `json:"statusCode"`
+	ErrorCode   string     `json:"errorCode,omitempty"`
+	Message     string     `json:"message,omitempty"`
+	RawResponse string     `json:"rawResponse,omitempty"`
+	TriggeredBy string     `json:"triggeredBy"`
+	StartedAt   time.Time  `json:"startedAt"`
+	FinishedAt  time.Time  `json:"finishedAt"`
+}
+
+type operationRecordResponse struct {
+	ID               string                `json:"id"`
+	Provider         string                `json:"provider"`
+	Name             string                `json:"name"`
+	Email            string                `json:"email,omitempty"`
+	Enabled          bool                  `json:"enabled"`
+	AuthStatus       string                `json:"authStatus"`
+	Refreshable      bool                  `json:"refreshable"`
+	CreatedAt        time.Time             `json:"createdAt"`
+	LatestOperation  *operationLogResponse `json:"latestOperation"`
+}
+
 type linkedAccountResponse struct {
 	ID       uint64 `json:"id,string"`
 	Provider string `json:"provider"`
@@ -426,6 +464,51 @@ func (h *Handler) list(c *gin.Context) {
 		items = append(items, newAccountResponse(value))
 	}
 	response.Success(c, http.StatusOK, gin.H{"items": items, "page": page, "pageSize": pageSize, "total": total})
+}
+
+func (h *Handler) listOperationRecords(c *gin.Context) {
+	page, pageSize := pagination(c)
+	values, total, err := h.service.ListOperationRecords(c.Request.Context(), accountapp.OperationRecordQuery{
+		Provider: accountdomain.Provider(c.Query("provider")),
+		OpType:   accountdomain.OperationType(c.Query("opType")),
+		Result:   c.Query("result"),
+		Page:     page,
+		PageSize: pageSize,
+		Search:   c.Query("search"),
+		Status:   c.Query("status"),
+		Sort:     repository.SortQuery{Field: c.Query("sortBy"), Direction: repository.SortDirection(c.Query("sortOrder"))},
+	})
+	if errors.Is(err, accountapp.ErrInvalidInput) || errors.Is(err, accountapp.ErrInvalidFilter) {
+		response.Error(c, http.StatusBadRequest, "invalidOperationRecordQuery", err.Error())
+		return
+	}
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "operationRecordListFailed", "读取账号操作记录失败")
+		return
+	}
+	items := make([]operationRecordResponse, 0, len(values))
+	for _, value := range values {
+		items = append(items, newOperationRecordResponse(value))
+	}
+	response.Success(c, http.StatusOK, gin.H{"items": items, "page": page, "pageSize": pageSize, "total": total})
+}
+
+func (h *Handler) listOperationLogs(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	opType := accountdomain.OperationType(c.Query("opType"))
+	values, err := h.service.ListOperationLogs(c.Request.Context(), id, opType)
+	if err != nil {
+		h.writeServiceError(c, "invalidOperationLogQuery", err, http.StatusInternalServerError, "读取账号操作历史失败")
+		return
+	}
+	items := make([]operationLogResponse, 0, len(values))
+	for _, value := range values {
+		items = append(items, newOperationLogResponse(value))
+	}
+	response.Success(c, http.StatusOK, gin.H{"items": items})
 }
 
 func (h *Handler) summary(c *gin.Context) {
@@ -812,12 +895,24 @@ func (h *Handler) importAuth(c *gin.Context) {
 	h.importFile(c, accountdomain.ProviderBuild)
 }
 
+func (h *Handler) importAuthBody(c *gin.Context) {
+	h.importBody(c, accountdomain.ProviderBuild)
+}
+
 func (h *Handler) importWebAuth(c *gin.Context) {
 	h.importFile(c, accountdomain.ProviderWeb)
 }
 
+func (h *Handler) importWebAuthBody(c *gin.Context) {
+	h.importBody(c, accountdomain.ProviderWeb)
+}
+
 func (h *Handler) importConsoleAuth(c *gin.Context) {
 	h.importFile(c, accountdomain.ProviderConsole)
+}
+
+func (h *Handler) importConsoleAuthBody(c *gin.Context) {
+	h.importBody(c, accountdomain.ProviderConsole)
 }
 
 func (h *Handler) convertWebToBuild(c *gin.Context) {
@@ -850,6 +945,23 @@ func (h *Handler) convertWebToBuild(c *gin.Context) {
 		}
 	}
 	h.streamWebToBuildConversion(c, request.All, ids, request.Strategy)
+}
+
+func (h *Handler) convertSSOToBuild(c *gin.Context) {
+	var req ssoConversionRequest
+	if c.ShouldBindJSON(&req) != nil {
+		response.Error(c, http.StatusBadRequest, "invalidRequest", "请求参数无效")
+		return
+	}
+	result, err := h.service.ConvertSSOToBuild(c.Request.Context(), req.SSO, req.Email, req.Name)
+	if err != nil {
+		h.writeServiceError(c, "ssoConversionFailed", err, http.StatusInternalServerError, "SSO 转换失败")
+		return
+	}
+	response.Success(c, http.StatusOK, gin.H{
+		"created": result.Created, "linked": result.Linked,
+		"account": gin.H{"id": result.AccountID, "name": result.Name, "email": result.Email},
+	})
 }
 
 func (h *Handler) syncWebToConsole(c *gin.Context) {
@@ -1137,6 +1249,41 @@ func readAccountImportDocuments(c *gin.Context, fileDescription string) ([][]byt
 	return documents, true
 }
 
+func (h *Handler) importBody(c *gin.Context, providerValue accountdomain.Provider) {
+	data, err := io.ReadAll(io.LimitReader(c.Request.Body, maxAccountImportBytes+1))
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "invalidAuthFile", "读取请求体失败")
+		return
+	}
+	if len(data) == 0 {
+		response.Error(c, http.StatusBadRequest, "invalidAuthFile", "请求体不能为空")
+		return
+	}
+	if len(data) > maxAccountImportBytes {
+		response.Error(c, http.StatusRequestEntityTooLarge, "accountImportFileTooLarge", "账号凭据数据大小不能超过 30 MiB")
+		return
+	}
+	stream := newAccountEventStream(c)
+	defer stream.Close()
+	var total atomic.Int64
+	pipeline := h.startSyncPipeline(c.Request.Context(), stream.SyncProgressObserver())
+	var result accountapp.ImportResult
+	var importErr error
+	if providerValue == accountdomain.ProviderWeb {
+		result, importErr = h.service.ImportWebCredentialDocumentsWithProgress(pipeline.ctx, [][]byte{data}, pipeline.Observe, stream.PhaseProgressObserver("importing", &total))
+	} else if providerValue == accountdomain.ProviderConsole {
+		result, importErr = h.service.ImportConsoleCredentialDocumentsWithProgress(pipeline.ctx, [][]byte{data}, pipeline.Observe, stream.PhaseProgressObserver("importing", &total))
+	} else {
+		result, importErr = h.service.ImportCredentialDocumentsWithProgress(pipeline.ctx, [][]byte{data}, pipeline.Observe, stream.PhaseProgressObserver("importing", &total))
+	}
+	syncResult := pipeline.Finish(importErr != nil)
+	if importErr != nil {
+		stream.WriteError("authImportFailed", "导入账号失败")
+		return
+	}
+	_ = stream.Write("complete", accountImportResponse{Created: result.Created, Updated: result.Updated, Synced: syncResult.Succeeded, SyncFailed: syncResult.Failed})
+}
+
 func (h *Handler) refreshWebQuota(c *gin.Context) {
 	id, ok := pathID(c)
 	if !ok {
@@ -1365,7 +1512,7 @@ func (h *Handler) writeServiceError(c *gin.Context, code string, err error, fall
 	case errors.Is(err, accountapp.ErrWebAccountScriptBusy):
 		response.Error(c, http.StatusConflict, "webAccountScriptBusy", err.Error())
 	default:
-		response.Error(c, fallbackStatus, code, fallbackMessage)
+		response.Error(c, fallbackStatus, code, err.Error())
 	}
 }
 
@@ -1473,6 +1620,39 @@ func (h *Handler) refreshAllConsoleQuotas(c *gin.Context) {
 		return
 	}
 	_ = stream.Write("complete", accountBatchResponse{Succeeded: succeeded, Failed: failed})
+}
+
+func newOperationLogResponse(value accountdomain.OperationLog) operationLogResponse {
+	return operationLogResponse{
+		ID:          strconv.FormatUint(value.ID, 10),
+		OpType:      string(value.OpType),
+		Success:     value.Success,
+		StatusCode:  value.StatusCode,
+		ErrorCode:   value.ErrorCode,
+		Message:     value.Message,
+		RawResponse: value.RawResponse,
+		TriggeredBy: string(value.TriggeredBy),
+		StartedAt:   value.StartedAt,
+		FinishedAt:  value.FinishedAt,
+	}
+}
+
+func newOperationRecordResponse(value accountapp.OperationRecord) operationRecordResponse {
+	item := operationRecordResponse{
+		ID:          strconv.FormatUint(value.Account.ID, 10),
+		Provider:    string(value.Account.Provider),
+		Name:        value.Account.Name,
+		Email:       value.Account.Email,
+		Enabled:     value.Account.Enabled,
+		AuthStatus:  string(value.Account.AuthStatus),
+		Refreshable: value.Account.EncryptedRefreshToken != "",
+		CreatedAt:   value.Account.CreatedAt,
+	}
+	if value.Latest != nil {
+		log := newOperationLogResponse(*value.Latest)
+		item.LatestOperation = &log
+	}
+	return item
 }
 
 func newAccountResponse(value accountapp.View) accountResponse {

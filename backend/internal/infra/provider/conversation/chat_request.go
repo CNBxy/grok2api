@@ -46,7 +46,12 @@ func convertChatRequest(body []byte, model string) ([]byte, ResponseOptions, err
 		target["text"] = mustJSON(map[string]json.RawMessage{"format": format})
 	}
 	if raw := source["reasoning_effort"]; !isEmptyJSON(raw) {
-		target["reasoning"] = mustJSON(map[string]json.RawMessage{"effort": raw})
+		// Chat Completions only expose effort. Ask Responses for a readable
+		// summary so Console/Build can map thinking back to reasoning_content.
+		target["reasoning"] = mustJSON(map[string]json.RawMessage{
+			"effort":  raw,
+			"summary": mustJSON("auto"),
+		})
 	}
 	var tools []any
 	if raw := source["tools"]; !isEmptyJSON(raw) {

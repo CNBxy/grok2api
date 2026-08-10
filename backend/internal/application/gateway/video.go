@@ -340,7 +340,8 @@ func (s *Service) runVideoJob(parent context.Context, job media.Job, route model
 	}
 	lastProgress := job.Progress
 	result, err := adapter.GenerateVideo(ctx, provider.VideoRequest{
-		Credential: lease.Credential, Billing: lease.Billing, JobID: job.ID, Prompt: job.Prompt, Duration: job.Seconds, AspectRatio: job.Size, Resolution: job.Quality,
+		Credential: lease.Credential, Billing: lease.Billing, JobID: job.ID, Model: route.UpstreamModel,
+		Prompt: job.Prompt, Duration: job.Seconds, AspectRatio: job.Size, Resolution: job.Quality,
 		ReferenceURLs: referenceURLs,
 		Progress: func(value int) {
 			value = min(99, max(1, value))
@@ -433,7 +434,14 @@ func (s *Service) runVideoJob(parent context.Context, job media.Job, route model
 		return
 	}
 	s.selector.MarkSuccess(context.Background(), lease.Credential)
-	if lease.QuotaMode != "" && lease.QuotaMode != "weekly" {
+	// catalog 有 Mode 且 lease.QuotaMode=weekly → imagine 视频，配额为只读快照，
+	// 本地不递减，仅触发上游 /rest/media/imagine/quota_info 同步以反映消耗。
+	imagineModel := quotaMode != "" && lease.QuotaMode == "weekly"
+	refreshMode := lease.QuotaMode
+	if imagineModel {
+		refreshMode = quotaMode
+	}
+	if lease.QuotaMode != "" && lease.QuotaMode != "weekly" && !imagineModel {
 		quotaCtx, quotaCancel := context.WithTimeout(context.Background(), accountStateWriteTimeout)
 		updated, quotaErr := s.accounts.DecrementQuota(quotaCtx, job.AccountID, lease.QuotaMode, 1)
 		quotaCancel()
@@ -446,8 +454,8 @@ func (s *Service) runVideoJob(parent context.Context, job media.Job, route model
 	if err := s.recordVideoAudit(context.Background(), job, time.Since(startedAt).Milliseconds()); err != nil {
 		s.logger.Error("video_usage_record_failed", "job_id", job.ID, "event_id", "video_usage_"+job.ID, "error", err)
 	}
-	if quotaKind, _ := s.providers.QuotaKind(route.Provider); quotaKind == provider.QuotaRemoteWindow && lease.QuotaMode != "" {
-		s.accounts.QueueQuotaRefresh(job.AccountID, lease.QuotaMode)
+	if quotaKind, _ := s.providers.QuotaKind(route.Provider); quotaKind == provider.QuotaRemoteWindow && refreshMode != "" {
+		s.accounts.QueueQuotaRefresh(job.AccountID, refreshMode)
 	}
 	// 输入回收放在账号状态、计费和审计收尾之后，存储抖动不得延迟关键终态逻辑。
 	s.releaseVideoInputs(job)

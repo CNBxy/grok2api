@@ -8,6 +8,26 @@ import (
 	"testing"
 )
 
+func TestConvertChatRequestIncludesReasoningSummary(t *testing.T) {
+	body := []byte(`{
+		"model":"public-chat",
+		"reasoning_effort":"high",
+		"messages":[{"role":"user","content":"hello"}]
+	}`)
+	converted, err := ConvertRequest(body, "grok-4.5", OperationChat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(converted, &payload); err != nil {
+		t.Fatal(err)
+	}
+	reasoning, _ := payload["reasoning"].(map[string]any)
+	if reasoning["effort"] != "high" || reasoning["summary"] != "auto" {
+		t.Fatalf("reasoning = %#v", reasoning)
+	}
+}
+
 func TestConvertChatRequestToResponses(t *testing.T) {
 	body := []byte(`{
 			"model":"public-chat","stream":true,"max_completion_tokens":512,

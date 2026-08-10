@@ -40,6 +40,9 @@ var blockedSubscriptionPrefixes = []netip.Prefix{
 type subscriptionEntry struct {
 	ProxyURL string
 	Key      string
+	// Name is the node name carried by structured (YAML) subscriptions. Line
+	// based and Base64 lists leave it empty and fall back to source naming.
+	Name string
 }
 
 func normalizeSubscriptionURL(value string) (string, error) {
@@ -368,7 +371,13 @@ func parseProxySubscription(value string) ([]subscriptionEntry, int, error) {
 			return entries, decodedSkipped, nil
 		}
 	}
-	return nil, skipped, errors.New("订阅中没有可用的 HTTP 或 SOCKS 代理")
+	// mihomo/Clash (mimo) subscriptions are served as YAML documents with a
+	// top-level `proxies:` node list. Convert each supported node into the
+	// same canonical proxy URL space as the line based formats above.
+	if entries, yamlSkipped, yamlErr := parseYAMLProxySubscription(value); yamlErr == nil && len(entries) > 0 {
+		return entries, yamlSkipped, nil
+	}
+	return nil, skipped, errors.New("订阅中没有可用的 HTTP、SOCKS 或隧道代理")
 }
 
 func parseProxyLines(value string) ([]subscriptionEntry, int) {
@@ -399,6 +408,15 @@ func parseProxyLines(value string) ([]subscriptionEntry, int) {
 		}
 	}
 	return entries, skipped
+}
+
+// subscriptionNodeName prefers the structured node name carried by YAML
+// subscriptions and falls back to the source name plus an ordinal.
+func subscriptionNodeName(entry subscriptionEntry, sourceName string, index int) string {
+	if entry.Name != "" {
+		return entry.Name
+	}
+	return sourceNodeName(sourceName, index)
 }
 
 func sourceNodeName(sourceName string, index int) string {

@@ -58,7 +58,7 @@ func (s *Service) syncSource(ctx context.Context, operations OperationsRepositor
 			return ImportResult{}, fmt.Errorf("%w: 加密导入节点", ErrSubscriptionSync)
 		}
 		nodes = append(nodes, domain.Node{
-			Name: sourceNodeName(source.Name, index), Scope: source.Scope, Enabled: true,
+			Name: subscriptionNodeName(entry, source.Name, index), Scope: source.Scope, Enabled: true,
 			SourceID: source.ID, SourceKey: entry.Key, AccountCapacity: source.DefaultAccountCapacity,
 			EncryptedProxyURL: encryptedProxy, UserAgent: userAgent, Health: 1, ProbeStatus: domain.ProbeStatusUnknown,
 		})

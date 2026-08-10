@@ -37,7 +37,7 @@ import (
 
 func TestCatalogMatchesSupportedSurface(t *testing.T) {
 	values := Catalog()
-	if len(values) != 10 {
+	if len(values) != 11 {
 		t.Fatalf("catalog size = %d", len(values))
 	}
 	publicIDs := make(map[string]struct{}, len(values))
@@ -50,7 +50,7 @@ func TestCatalogMatchesSupportedSurface(t *testing.T) {
 		routeKeys[routeKey] = struct{}{}
 		publicIDs[value.PublicID] = struct{}{}
 	}
-	for _, required := range []string{"grok-chat-fast", "grok-chat-auto", "grok-chat-expert", "grok-chat-heavy", "grok-imagine-image-2.0", "grok-imagine-image-quality-2.0", "grok-imagine-image-edit", "grok-imagine-video"} {
+	for _, required := range []string{"grok-chat-fast", "grok-chat-auto", "grok-chat-expert", "grok-chat-heavy", "grok-imagine-image-2.0", "grok-imagine-image-quality-2.0", "grok-imagine-image-edit", "imagine-x-1", "grok-imagine-video"} {
 		if _, exists := publicIDs[required]; !exists {
 			t.Fatalf("missing supported model: %s", required)
 		}
@@ -1062,6 +1062,9 @@ func TestOnlyChatModelsExposeRateLimitModes(t *testing.T) {
 			if spec.Mode != "fast" {
 				t.Fatalf("Lite image must use fast quota mode, got %q", spec.Mode)
 			}
+			continue
+		}
+		if isImagineQuotaMode(spec.Mode) {
 			continue
 		}
 		if spec.Mode != "" {

@@ -21,7 +21,7 @@ const MUTE_TOAST_ID = "quality-guard-degrade-mute";
 export function DegradeAccountsPanel({ softTPS, hardTPS }: { softTPS?: number; hardTPS?: number }) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
-  const [window, setWindow] = useState<DegradeWindow>("24h");
+  const [range, setRange] = useState<DegradeWindow>("24h");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"all" | "on" | "off">("all");
   const [cls, setCls] = useState<"all" | DegradeClass>("all");
@@ -29,8 +29,8 @@ export function DegradeAccountsPanel({ softTPS, hardTPS }: { softTPS?: number; h
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
 
   const query = useQuery({
-    queryKey: ["quality-guard-degrade-accounts", window, softTPS, hardTPS],
-    queryFn: () => getDegradeAccounts({ window, softTPS, hardTPS }),
+    queryKey: ["quality-guard-degrade-accounts", range, softTPS, hardTPS],
+    queryFn: () => getDegradeAccounts({ window: range, softTPS, hardTPS }),
     refetchInterval: 15_000,
   });
 
@@ -95,7 +95,7 @@ export function DegradeAccountsPanel({ softTPS, hardTPS }: { softTPS?: number; h
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input className="h-8 w-44 pl-8" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("qualityGuard.degrade.search")} />
             </div>
-            <FilterSelect value={window} onChange={(value) => { setSelected(new Set()); setWindow(value as DegradeWindow); }} items={[["1h", t("qualityGuard.degrade.windows.1h")], ["6h", t("qualityGuard.degrade.windows.6h")], ["24h", t("qualityGuard.degrade.windows.24h")], ["7d", t("qualityGuard.degrade.windows.7d")]]} />
+            <FilterSelect value={range} onChange={(value) => { setSelected(new Set()); setRange(value as DegradeWindow); }} items={[["1h", t("qualityGuard.degrade.windows.1h")], ["6h", t("qualityGuard.degrade.windows.6h")], ["24h", t("qualityGuard.degrade.windows.24h")], ["7d", t("qualityGuard.degrade.windows.7d")]]} />
             <FilterSelect value={status} onChange={(value) => setStatus(value as "all" | "on" | "off")} items={[["all", t("qualityGuard.degrade.statusAll")], ["on", t("qualityGuard.degrade.statusOn")], ["off", t("qualityGuard.degrade.statusOff")]]} />
             <FilterSelect value={cls} onChange={(value) => setCls(value as "all" | DegradeClass)} items={[["all", t("qualityGuard.degrade.classAll")], ["buffered_burst", "burst"], ["soft_tps", "soft"], ["hard_tps", "hard"]]} />
             <FilterSelect value={String(hitsMin)} onChange={(value) => setHitsMin(Number(value))} items={[["1", t("qualityGuard.degrade.hitsAll")], ["2", t("qualityGuard.degrade.hitsMin", { count: 2 })], ["3", t("qualityGuard.degrade.hitsMin", { count: 3 })], ["5", t("qualityGuard.degrade.hitsMin", { count: 5 })], ["10", t("qualityGuard.degrade.hitsMin", { count: 10 })]]} />

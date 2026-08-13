@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,14 +23,15 @@ import (
 )
 
 const (
-	ssoBuildClientID = "b1a00492-073a-47ea-816f-4c329264a828"
-	ssoBuildScope    = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write"
-	ssoAccountsURL   = "https://accounts.x.ai/"
-	ssoDeviceURL     = "https://auth.x.ai/oauth2/device/code"
-	ssoVerifyURL     = "https://auth.x.ai/oauth2/device/verify"
-	ssoApproveURL    = "https://auth.x.ai/oauth2/device/approve"
-	ssoTokenURL      = "https://auth.x.ai/oauth2/token"
-	maxAuthBody      = 2 << 20
+	ssoBuildClientID    = "b1a00492-073a-47ea-816f-4c329264a828"
+	ssoBuildScope       = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write workspaces:read workspaces:write"
+	ssoBuildSurface     = "ui"
+	ssoAccountsURL      = "https://accounts.x.ai/"
+	ssoDeviceURL        = "https://auth.x.ai/oauth2/device/code"
+	ssoVerifyURL        = "https://auth.x.ai/oauth2/device/verify"
+	ssoApproveURL       = "https://auth.x.ai/oauth2/device/approve"
+	ssoTokenURL         = "https://auth.x.ai/oauth2/token"
+	maxAuthBody         = 2 << 20
 )
 
 type ssoBuildHTTPClient interface {
@@ -37,9 +39,30 @@ type ssoBuildHTTPClient interface {
 }
 
 type ssoBuildFlow struct {
-	client    ssoBuildHTTPClient
-	userAgent string
-	cookies   map[string]string
+	client        ssoBuildHTTPClient
+	userAgent     string
+	cookies       map[string]string
+	clientSurface string
+	clientVersion string
+}
+
+// withLocation 为错误附加调用位置的 file:line 信息，用于调试追踪。
+func withLocation(err error) error {
+	if err == nil {
+		return nil
+	}
+	_, file, line, ok := runtime.Caller(1)
+	if !ok {
+		return err
+	}
+	short := file
+	for i := len(file) - 1; i >= 0; i-- {
+		if file[i] == '/' {
+			short = file[i+1:]
+			break
+		}
+	}
+	return fmt.Errorf("%s:%d: %w", short, line, err)
 }
 
 func (a *Adapter) ConvertToBuild(ctx context.Context, credential accountdomain.Credential) (provider.CredentialSeed, error) {
@@ -48,7 +71,7 @@ func (a *Adapter) ConvertToBuild(ctx context.Context, credential accountdomain.C
 	}
 	token, err := a.cipher.Decrypt(credential.EncryptedAccessToken)
 	if err != nil {
-		return provider.CredentialSeed{}, fmt.Errorf("解密 Grok Web SSO: %w", err)
+		return provider.CredentialSeed{}, withLocation(fmt.Errorf("解密 Grok Web SSO: %w", err))
 	}
 	token = normalizeSSOToken(token)
 	if token == "" {
@@ -56,19 +79,21 @@ func (a *Adapter) ConvertToBuild(ctx context.Context, credential accountdomain.C
 	}
 	lease, err := a.egress.AcquireCredential(ctx, egressdomain.ScopeWeb, credential)
 	if err != nil {
-		return provider.CredentialSeed{}, err
+		return provider.CredentialSeed{}, withLocation(err)
 	}
 	defer lease.Release()
 	requestCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	flow := &ssoBuildFlow{
 		client: lease, userAgent: lease.UserAgent,
-		cookies: map[string]string{"sso": token, "sso-rw": token},
+		cookies:       map[string]string{"sso": token, "sso-rw": token},
+		clientSurface: ssoBuildSurface,
+		clientVersion: a.config().ClientVersion,
 	}
 	seed, err := flow.convert(requestCtx, credential)
 	if err != nil {
 		a.egress.Feedback(context.WithoutCancel(ctx), lease.NodeID, conversionStatus(err), err)
-		return provider.CredentialSeed{}, err
+		return provider.CredentialSeed{}, withLocation(err)
 	}
 	a.egress.Feedback(context.WithoutCancel(ctx), lease.NodeID, http.StatusOK, nil)
 	return seed, nil
@@ -86,8 +111,8 @@ func (f *ssoBuildFlow) convert(ctx context.Context, credential accountdomain.Cre
 		return provider.CredentialSeed{}, fmt.Errorf("校验 Grok Web SSO 失败: %w", conversionHTTPError{status: status})
 	}
 
-	form := url.Values{"client_id": {ssoBuildClientID}, "scope": {ssoBuildScope}}
-	status, _, body, err := f.do(ctx, http.MethodPost, ssoDeviceURL, form)
+	form := url.Values{"client_id": {ssoBuildClientID}, "scope": {ssoBuildScope}, "referrer": {"grok-build"}}
+	status, _, body, err := f.do(ctx, http.MethodPost, ssoDeviceURL, form, true)
 	if err != nil {
 		return provider.CredentialSeed{}, err
 	}
@@ -186,7 +211,7 @@ func (f *ssoBuildFlow) pollToken(ctx context.Context, deviceCode string, interva
 		}
 		status, _, body, err := f.do(ctx, http.MethodPost, ssoTokenURL, url.Values{
 			"grant_type": {"urn:ietf:params:oauth:grant-type:device_code"}, "client_id": {ssoBuildClientID}, "device_code": {deviceCode},
-		})
+		}, true)
 		if err != nil {
 			return ssoBuildToken{}, err
 		}
@@ -225,10 +250,11 @@ func (f *ssoBuildFlow) pollToken(ctx context.Context, deviceCode string, interva
 	return ssoBuildToken{}, fmt.Errorf("xAI Device Flow 轮询超时")
 }
 
-func (f *ssoBuildFlow) do(ctx context.Context, method, endpoint string, form url.Values) (int, string, []byte, error) {
+func (f *ssoBuildFlow) do(ctx context.Context, method, endpoint string, form url.Values, deviceFlow ...bool) (int, string, []byte, error) {
 	if !safeXAIURL(endpoint) {
 		return 0, "", nil, fmt.Errorf("xAI OAuth URL 不安全")
 	}
+	isDeviceFlow := len(deviceFlow) > 0 && deviceFlow[0]
 	currentURL := endpoint
 	currentMethod := method
 	currentForm := form
@@ -247,6 +273,14 @@ func (f *ssoBuildFlow) do(ctx context.Context, method, endpoint string, form url
 		request.Header.Set("Cookie", f.cookieHeader())
 		if currentForm != nil {
 			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+		if isDeviceFlow {
+			if f.clientVersion != "" {
+				request.Header.Set("x-grok-client-version", f.clientVersion)
+			}
+			if f.clientSurface != "" {
+				request.Header.Set("x-grok-client-surface", f.clientSurface)
+			}
 		}
 		response, err := f.client.Do(request)
 		if err != nil {

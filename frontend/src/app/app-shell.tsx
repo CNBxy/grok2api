@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Box, ChevronDown, Eye, Image, KeyRound, Languages, LayoutDashboard, LogOut, Menu, MessageSquareText, Monitor, Moon, MoreHorizontal, Settings, ShieldCheck, Sparkles, Sun, Users, Video } from "lucide-react";
+import { AudioLines, Box, ChevronDown, Eye, History, Image, KeyRound, Languages, LayoutDashboard, LogOut, Menu, MessageSquareText, Monitor, Moon, MoreHorizontal, Settings, ShieldCheck, Sparkles, Sun, Users, Video } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
@@ -23,6 +23,7 @@ import { CurrentVersionLabel } from "@/features/system/version-update";
 const navigation = [
   { href: "/dashboard", label: "nav.dashboard", icon: LayoutDashboard },
   { href: "/accounts", label: "nav.accounts", icon: Users },
+  { href: "/account-refresh-records", label: "nav.accountRefreshRecords", icon: History },
   { href: "/client-keys", label: "nav.clientKeys", icon: KeyRound },
   { href: "/models", label: "nav.models", icon: Box },
   { href: "/gallery", label: "nav.gallery", icon: Image },
@@ -55,7 +56,24 @@ const documentation = [
     icon: Video,
     items: [
       { href: "/docs/video/generations", label: "Video Generations", method: "POST" },
+      { href: "/docs/video/edits", label: "Video Edits", method: "POST" },
+      { href: "/docs/video/extensions", label: "Video Extensions", method: "POST" },
       { href: "/docs/video/get", label: "Get Video", method: "GET" },
+    ],
+  },
+  {
+    label: "Voice",
+    icon: AudioLines,
+    items: [
+      { href: "/docs/voice/tts", label: "Text to Speech", method: "POST" },
+      { href: "/docs/voice/audio-speech", label: "OpenAI Speech", method: "POST" },
+      { href: "/docs/voice/audio-tasks", label: "OpenAI Audio Tasks", method: "POST" },
+      { href: "/docs/voice/audio-transcriptions", label: "OpenAI Transcriptions", method: "POST" },
+      { href: "/docs/voice/voices", label: "List Voices", method: "GET" },
+      { href: "/docs/voice/stt", label: "Speech to Text", method: "POST" },
+      { href: "/docs/voice/realtime-secrets", label: "Realtime Secrets", method: "POST" },
+      { href: "/docs/voice/realtime", label: "Realtime WebSocket", method: "GET" },
+      { href: "/docs/voice/custom-voices", label: "Custom Voices", method: "POST" },
     ],
   },
 ] as const;

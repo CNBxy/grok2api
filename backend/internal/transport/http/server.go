@@ -65,6 +65,8 @@ type Dependencies struct {
 	QualityGuardToken      string
 	QualityGuardProbe      egressapp.QualityProbeInput
 	Updates                *updatecheckapp.Service
+  // AdminManagementKey 可选的静态管理密钥，用于机器间认证（替代 JWT）。
+	AdminManagementKey string
 }
 
 type ReadinessComponent struct {
@@ -115,7 +117,8 @@ func New(deps Dependencies) *gin.Engine {
 		deps.Logger = slog.Default()
 	}
 	router := gin.New()
-	router.Use(gin.Recovery(), middleware.RequestID(), middleware.SecurityHeaders(), middleware.MaxBodyBytes(deps.MaxBodyBytes), middleware.Timeout(deps.RequestTimeout), middleware.AccessLog(deps.Logger))
+	// CORS 必须在鉴权与业务路由之前，以便浏览器预检 OPTIONS 不被 ClientAuth 拒绝。
+	router.Use(gin.Recovery(), middleware.CORS(), middleware.RequestID(), middleware.SecurityHeaders(), middleware.MaxBodyBytes(deps.MaxBodyBytes), middleware.Timeout(deps.RequestTimeout), middleware.AccessLog(deps.Logger))
 	router.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 	router.GET("/readyz", func(c *gin.Context) {
 		if deps.Readiness != nil {
@@ -143,7 +146,7 @@ func New(deps Dependencies) *gin.Engine {
 	authHandler := adminauthhttp.NewHandler(deps.AdminAuth, deps.SecureCookies)
 	authHandler.RegisterPublic(adminRoot)
 	adminProtected := adminRoot.Group("")
-	adminProtected.Use(middleware.AdminAuth(deps.AdminAuth))
+	adminProtected.Use(middleware.AdminAuthWithManagementKey(deps.AdminAuth, deps.AdminManagementKey))
 	authHandler.RegisterAuthenticated(adminProtected)
 	accounthttp.NewHandler(deps.Accounts, deps.AccountSync).Register(adminProtected)
 	modelhttp.NewHandler(deps.Models).Register(adminProtected)

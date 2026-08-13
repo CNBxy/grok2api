@@ -845,6 +845,38 @@ func TestOrderConversationRouteTargetsIsSessionStableAndProviderScoped(t *testin
 	}
 }
 
+func TestConversationToolRequirementsRouteByProviderCapability(t *testing.T) {
+	routes := []modeldomain.Route{
+		{ID: 10, Provider: account.ProviderBuild},
+		{ID: 20, Provider: account.ProviderWeb},
+		{ID: 30, Provider: account.ProviderConsole},
+	}
+	requirements := parseConversationToolRequirements([]byte(`{
+		"tools":[{"type":"web_search"},{"type":"x_search"}],
+		"tool_choice":"required"
+	}`))
+	if !requirements.xSearch || !requirements.requiredWebSearch {
+		t.Fatalf("requirements = %#v", requirements)
+	}
+	filtered := filterConversationRoutesForTools(routes, requirements)
+	if len(filtered) != 2 || filtered[0].Provider != account.ProviderBuild || filtered[1].Provider != account.ProviderConsole {
+		t.Fatalf("x_search routes = %#v", filtered)
+	}
+	ordered := orderConversationRouteTargetsForTools(routes, "session", conversationToolRequirements{requiredWebSearch: true})
+	if ordered[0].Provider != account.ProviderBuild || ordered[1].Provider != account.ProviderConsole || ordered[2].Provider != account.ProviderWeb {
+		t.Fatalf("required web_search order = %#v", ordered)
+	}
+	searchRoutes := []modeldomain.Route{
+		{ID: 10, PublicID: "Build/grok-4.5", Provider: account.ProviderBuild, UpstreamModel: "grok-4.5"},
+		{ID: 20, PublicID: "Web/grok-4.5", Provider: account.ProviderWeb, UpstreamModel: "grok-4.5"},
+		{ID: 30, PublicID: "Console/grok-4.5", Provider: account.ProviderConsole, UpstreamModel: "grok-4.5"},
+	}
+	ordered = orderConversationRouteTargetsForTools(searchRoutes, "session", conversationToolRequirements{xSearch: true})
+	if ordered[0].Provider != account.ProviderConsole || ordered[1].Provider != account.ProviderBuild || ordered[2].Provider != account.ProviderWeb {
+		t.Fatalf("grok-4.5 search order = %#v", ordered)
+	}
+}
+
 func TestRouteTargetSeedUsesSessionSignalsAndSoftMessageAnchor(t *testing.T) {
 	base := Input{
 		RequestID: "request-a", ClientKey: clientkey.Key{ID: 17},
@@ -1863,8 +1895,8 @@ func TestImageStreamPropagatesWithoutTouchingChatQuota(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := modelRepo.UpsertRoutes(ctx, []modeldomain.Route{
-		{PublicID: "grok-imagine-image-quality-lite", Provider: account.ProviderWeb, UpstreamModel: "grok-imagine-image-quality", Capability: modeldomain.CapabilityImage, Enabled: true},
-		{PublicID: "grok-imagine-image-lite", Provider: account.ProviderWeb, UpstreamModel: "grok-imagine-image", Capability: modeldomain.CapabilityImage, Enabled: true},
+		{PublicID: "grok-imagine-image-quality-2.0", Provider: account.ProviderWeb, UpstreamModel: "grok-imagine-image-quality", Capability: modeldomain.CapabilityImage, Enabled: true},
+		{PublicID: "grok-imagine-image-2.0", Provider: account.ProviderWeb, UpstreamModel: "grok-imagine-image", Capability: modeldomain.CapabilityImage, Enabled: true},
 		{PublicID: "grok-imagine-image-edit", Provider: account.ProviderWeb, UpstreamModel: "grok-imagine-image-edit", Capability: modeldomain.CapabilityImageEdit, Enabled: true},
 	}); err != nil {
 		t.Fatal(err)
@@ -1888,7 +1920,7 @@ func TestImageStreamPropagatesWithoutTouchingChatQuota(t *testing.T) {
 	service := NewService(modelRepo, auditRepo, accountService, clientkeyapp.NewService(keyRepo, nil, nil, 60, 4, nil), registry, selector, responseRepo, 1)
 
 	result, err := service.GenerateImage(ctx, ImageGenerationInput{
-		RequestID: "req-image-stream", ClientKey: key, PublicModel: "grok-imagine-image-quality-lite",
+		RequestID: "req-image-stream", ClientKey: key, PublicModel: "grok-imagine-image-quality-2.0",
 		Prompt: "test", Count: 1, Resolution: "1k", ResponseFormat: "url", Streaming: true, PartialImages: 1,
 	})
 	if err != nil {
@@ -1928,7 +1960,7 @@ func TestImageStreamPropagatesWithoutTouchingChatQuota(t *testing.T) {
 	}
 
 	liteResult, err := service.GenerateImage(ctx, ImageGenerationInput{
-		RequestID: "req-image-lite", ClientKey: key, PublicModel: "grok-imagine-image-lite",
+		RequestID: "req-image-lite", ClientKey: key, PublicModel: "grok-imagine-image-2.0",
 		Prompt: "test", Count: 1, ResponseFormat: "url",
 	})
 	if err != nil {
@@ -1967,8 +1999,8 @@ func TestImageStreamPropagatesWithoutTouchingChatQuota(t *testing.T) {
 	}
 
 	chatResult, err := service.CreateChatCompletion(ctx, Input{
-		RequestID: "req-image-lite-chat", ClientKey: key, PublicModel: "grok-imagine-image-lite",
-		Body: []byte(`{"model":"grok-imagine-image-lite","messages":[{"role":"user","content":"draw"}],"image_config":{"n":3}}`),
+		RequestID: "req-image-lite-chat", ClientKey: key, PublicModel: "grok-imagine-image-2.0",
+		Body: []byte(`{"model":"grok-imagine-image-2.0","messages":[{"role":"user","content":"draw"}],"image_config":{"n":3}}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2022,7 +2054,7 @@ func TestImageStreamPropagatesWithoutTouchingChatQuota(t *testing.T) {
 	attemptsBeforeFailure := len(adapter.Attempts())
 	adapter.FailWithEgress(infraegress.NewManager(relational.NewEgressRepository(database), testCipher(t)))
 	if _, err := service.GenerateImage(ctx, ImageGenerationInput{
-		RequestID: "req-image-failed", ClientKey: key, PublicModel: "grok-imagine-image-quality-lite",
+		RequestID: "req-image-failed", ClientKey: key, PublicModel: "grok-imagine-image-quality-2.0",
 		Prompt: "test", Count: 1, Resolution: "1k", ResponseFormat: "url",
 	}); err == nil {
 		t.Fatal("expected image transport failure")

@@ -49,6 +49,7 @@ var schemaModels = []any{
 	&mediaAssetModel{},
 	&mediaUploadTicketModel{},
 	&runtimeSettingsModel{},
+	&accountOperationLogModel{},
 }
 
 var schemaIndexes = []string{
@@ -61,6 +62,7 @@ var schemaIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_accounts_created_id ON provider_accounts(created_at DESC, id DESC)",
 	"CREATE INDEX IF NOT EXISTS idx_accounts_auto_clean_reauth ON provider_accounts(auth_status, reauth_marked_at, id)",
 	"CREATE INDEX IF NOT EXISTS idx_accounts_auto_clean_reauth_cursor ON provider_accounts(auth_status, enabled, id, reauth_marked_at)",
+	"CREATE INDEX IF NOT EXISTS idx_account_operation_logs_account_op_finished ON account_operation_logs(account_id, op_type, finished_at DESC, id DESC)",
 	"CREATE INDEX IF NOT EXISTS idx_account_credentials_refresh_due ON account_credentials(refresh_due_at, account_id)",
 	"CREATE INDEX IF NOT EXISTS idx_account_credentials_build_bot_flag ON account_credentials(build_bot_flag_source, account_id)",
 	"CREATE INDEX IF NOT EXISTS idx_quota_windows_due ON account_quota_windows(remaining, reset_at, account_id)",
@@ -129,6 +131,7 @@ func (d *Database) initializeSchema(ctx context.Context) error {
 	hadProviderScope := hadClientKeys && db.Migrator().HasColumn(&clientKeyModel{}, "ProviderScopeMask")
 	hadTierScope := hadClientKeys && db.Migrator().HasColumn(&clientKeyModel{}, "TierScopeMask")
 	hadLegacyAccountPool := hadClientKeys && db.Migrator().HasColumn("client_keys", "account_pool")
+	hadGlobalSubscriptionProxy := db.Migrator().HasTable("egress_operations_config") && db.Migrator().HasColumn("egress_operations_config", "encrypted_subscription_proxy_url")
 	// all 作用域会让 Build 与 Web 共用 UA、健康度和冷却状态，升级时直接移除旧节点。
 	if db.Migrator().HasTable(&egressNodeModel{}) {
 		if err := db.Where("scope = ?", "all").Delete(&egressNodeModel{}).Error; err != nil {
@@ -149,6 +152,11 @@ func (d *Database) initializeSchema(ctx context.Context) error {
 	if migrateErr != nil {
 		return fmt.Errorf("初始化数据库表: %w", migrateErr)
 	}
+	if hadGlobalSubscriptionProxy {
+		if err := d.migratePerSourceSubscriptionProxy(ctx); err != nil {
+			return fmt.Errorf("迁移代理订阅拉取代理: %w", err)
+		}
+	}
 	if err := d.migrateClientKeyAccountScopes(ctx, hadLegacyAccountPool, !hadProviderScope, !hadTierScope); err != nil {
 		return fmt.Errorf("迁移客户端 Key 调用范围: %w", err)
 	}
@@ -166,6 +174,9 @@ func (d *Database) initializeSchema(ctx context.Context) error {
 	}
 	if err := d.ensureAuditOperationConstraints(ctx); err != nil {
 		return fmt.Errorf("迁移请求审计操作约束: %w", err)
+	}
+	if err := d.ensureModelRouteCapabilityConstraints(ctx); err != nil {
+		return fmt.Errorf("迁移模型路由能力约束: %w", err)
 	}
 	if err := d.ensureMediaJobConstraints(ctx); err != nil {
 		return fmt.Errorf("迁移 media job 数据库约束: %w", err)
@@ -214,6 +225,32 @@ func (d *Database) initializeSchema(ctx context.Context) error {
 		return fmt.Errorf("迁移模型 Provider 命名空间: %w", err)
 	}
 	return nil
+}
+
+func (d *Database) migratePerSourceSubscriptionProxy(ctx context.Context) error {
+	return d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var legacy struct {
+			EncryptedProxyURL string `gorm:"column:encrypted_subscription_proxy_url"`
+		}
+		err := tx.Table("egress_operations_config").Select("encrypted_subscription_proxy_url").Where("id = ?", 1).Take(&legacy).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(legacy.EncryptedProxyURL) == "" {
+			return nil
+		}
+		if err := tx.Model(&egressSubscriptionSourceModel{}).Where("encrypted_proxy_url = ''").Updates(map[string]any{
+			"encrypted_proxy_url": legacy.EncryptedProxyURL,
+			"next_sync_at":        nil,
+			"last_sync_error":     "",
+		}).Error; err != nil {
+			return err
+		}
+		return tx.Table("egress_operations_config").Where("id = ?", 1).Update("encrypted_subscription_proxy_url", "").Error
+	})
 }
 
 // migrateClientKeyAccountScopes translates the short-lived account_pool
@@ -386,11 +423,19 @@ func (d *Database) ensureEgressAssetScopeConstraints(ctx context.Context) error 
 }
 
 // ensureAuditOperationConstraints upgrades existing databases so Codex remote
-// compaction can be recorded separately from ordinary Responses requests.
+// compaction and Console voice operations can be recorded separately.
 func (d *Database) ensureAuditOperationConstraints(ctx context.Context) error {
 	return d.ensureNamedConstraints(ctx, []consoleConstraint{
 		{model: &requestAuditModel{}, table: "request_audits", name: "chk_request_audits_operation"},
-	}, "compaction")
+	}, "tts")
+}
+
+// ensureModelRouteCapabilityConstraints upgrades existing databases so Console
+// TTS/STT/Realtime routes can be managed alongside image and video.
+func (d *Database) ensureModelRouteCapabilityConstraints(ctx context.Context) error {
+	return d.ensureNamedConstraints(ctx, []consoleConstraint{
+		{model: &modelRouteModel{}, table: "model_routes", name: "chk_model_routes_capability"},
+	}, "tts")
 }
 
 // ensureMediaJobConstraints 将历史仅允许 grok_web 的 media job CHECK 升级到支持 Build 与 Console 视频。

@@ -24,6 +24,7 @@ import (
 	clientkeydomain "github.com/chenyme/grok2api/backend/internal/domain/clientkey"
 	mediadomain "github.com/chenyme/grok2api/backend/internal/domain/media"
 	modeldomain "github.com/chenyme/grok2api/backend/internal/domain/model"
+	"github.com/chenyme/grok2api/backend/internal/infra/provider"
 	"github.com/chenyme/grok2api/backend/internal/pkg/neterror"
 	"github.com/chenyme/grok2api/backend/internal/transport/http/middleware"
 	"github.com/gin-gonic/gin"
@@ -90,8 +91,29 @@ func (h *Handler) Register(router *gin.RouterGroup) {
 	router.POST("/images/generations", h.generateImage)
 	router.POST("/images/edits", h.editImage)
 	router.POST("/videos/generations", h.generateVideo)
+	router.POST("/videos/edits", h.editVideo)
+	router.POST("/videos/extensions", h.extendVideo)
 	router.GET("/videos/:requestId", h.getVideo)
 	router.GET("/videos/:requestId/content", h.getVideoContent)
+	router.POST("/tts", h.synthesizeSpeech)
+	router.GET("/tts", h.proxyTTSWebSocket)
+	router.GET("/tts/voices", h.listTTSVoices)
+	router.GET("/tts/voices/:voiceId", h.getTTSVoice)
+	router.POST("/stt", h.transcribeSpeech)
+	router.GET("/stt", h.proxySTTWebSocket)
+	// OpenAI-compatible audio aliases for common client SDKs.
+	router.POST("/audio/speech", h.synthesizeOpenAISpeech)
+	router.POST("/audio/tasks", h.synthesizeOpenAIAudioTask)
+	router.POST("/audio/transcriptions", h.transcribeOpenAIAudio)
+	router.POST("/audio/translations", h.transcribeOpenAIAudio)
+	router.POST("/realtime/client_secrets", h.createRealtimeClientSecret)
+	router.GET("/realtime", h.proxyRealtimeWebSocket)
+	router.POST("/custom-voices", h.createCustomVoice)
+	router.GET("/custom-voices", h.listCustomVoices)
+	router.GET("/custom-voices/:voiceId", h.getCustomVoice)
+	router.PATCH("/custom-voices/:voiceId", h.updateCustomVoice)
+	router.DELETE("/custom-voices/:voiceId", h.deleteCustomVoice)
+	router.GET("/custom-voices/:voiceId/audio", h.getCustomVoiceAudio)
 	router.POST("/responses/compact", h.compactResponse)
 	router.GET("/responses/:responseId", h.getResponse)
 	router.DELETE("/responses/:responseId", h.deleteResponse)
@@ -165,6 +187,7 @@ type videoGenerationRequest struct {
 	Resolution      string                 `json:"resolution"`
 	Image           *videoGenerationImage  `json:"image"`
 	ReferenceImages []videoGenerationImage `json:"reference_images"`
+	Video           *videoGenerationImage  `json:"video"`
 	Output          json.RawMessage        `json:"output"`
 	StorageOptions  json.RawMessage        `json:"storage_options"`
 }
@@ -764,14 +787,32 @@ func requestIdentity(c *gin.Context) (clientkeydomain.Key, string, bool) {
 }
 
 func (h *Handler) generateVideo(c *gin.Context) {
+	h.handleVideoCreate(c, gatewayVideoOperationGenerate, "视频生成")
+}
+
+func (h *Handler) editVideo(c *gin.Context) {
+	h.handleVideoCreate(c, gatewayVideoOperationEdit, "视频编辑")
+}
+
+func (h *Handler) extendVideo(c *gin.Context) {
+	h.handleVideoCreate(c, gatewayVideoOperationExtend, "视频延长")
+}
+
+const (
+	gatewayVideoOperationGenerate = "generate"
+	gatewayVideoOperationEdit     = "edit"
+	gatewayVideoOperationExtend   = "extend"
+)
+
+func (h *Handler) handleVideoCreate(c *gin.Context, operation, label string) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, h.maxBodyBytes)
 	if !isJSONRequest(c) {
-		writeOpenAIError(c, http.StatusUnsupportedMediaType, "invalid_request", "视频生成仅支持 application/json")
+		writeOpenAIError(c, http.StatusUnsupportedMediaType, "invalid_request", label+"仅支持 application/json")
 		return
 	}
 	var request videoGenerationRequest
 	if err := decodeSingleJSON(c.Request.Body, &request, true); err != nil {
-		writeOpenAIError(c, http.StatusBadRequest, "invalid_request", "视频生成 JSON 请求无效: "+err.Error())
+		writeOpenAIError(c, http.StatusBadRequest, "invalid_request", label+" JSON 请求无效: "+err.Error())
 		return
 	}
 	if hasJSONValue(request.Output) {
@@ -782,71 +823,161 @@ func (h *Handler) generateVideo(c *gin.Context) {
 		writeOpenAIError(c, http.StatusBadRequest, "unsupported_parameter", "当前兼容层暂不支持 storage_options")
 		return
 	}
-	duration, err := parseVideoDuration(request.Duration)
-	if err != nil {
-		writeOpenAIError(c, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
 	model := strings.TrimSpace(request.Model)
 	prompt := strings.TrimSpace(request.Prompt)
 	if model == "" {
-		writeOpenAIError(c, http.StatusBadRequest, "invalid_request", "视频生成缺少有效 model")
+		writeOpenAIError(c, http.StatusBadRequest, "invalid_request", label+"缺少有效 model")
 		return
 	}
-	aspectRatio := strings.TrimSpace(request.AspectRatio)
-	if aspectRatio == "" {
-		aspectRatio = "16:9"
+	// Edit/extension stay on grok-imagine-video (not 1.5).
+	if operation != gatewayVideoOperationGenerate {
+		if model != "grok-imagine-video" && model != "Console/grok-imagine-video" {
+			writeOpenAIError(c, http.StatusBadRequest, "invalid_request", "视频编辑/延长仅支持 grok-imagine-video")
+			return
+		}
 	}
-	if !validVideoAspectRatio(aspectRatio) {
-		writeOpenAIError(c, http.StatusBadRequest, "invalid_request", "aspect_ratio 必须是 1:1、16:9、9:16、4:3、3:4、3:2 或 2:3")
-		return
-	}
-	resolution := strings.ToLower(strings.TrimSpace(request.Resolution))
-	if resolution == "" {
-		resolution = "720p"
-	}
-	if resolution != "480p" && resolution != "720p" && resolution != "1080p" {
-		writeOpenAIError(c, http.StatusBadRequest, "invalid_request", "resolution 必须是 480p、720p 或 1080p")
-		return
-	}
-	inputs := append([]videoGenerationImage(nil), request.ReferenceImages...)
-	if request.Image != nil {
-		inputs = append([]videoGenerationImage{*request.Image}, inputs...)
-	}
-	if len(inputs) > mediadomain.MaxInputImages {
-		writeOpenAIError(c, http.StatusBadRequest, "invalid_request", fmt.Sprintf("image 与 reference_images 合计不能超过 %d 张", mediadomain.MaxInputImages))
-		return
-	}
-	referenceURLs := make([]string, 0, len(inputs))
-	for _, input := range inputs {
+	parseVideoImage := func(input videoGenerationImage, field string) (string, bool) {
 		urlValue := strings.TrimSpace(input.URL)
 		fileID := strings.TrimSpace(input.FileID)
 		if (urlValue == "") == (fileID == "") {
-			writeOpenAIError(c, http.StatusBadRequest, "invalid_request", "每个 image 必须且只能提供 url 或 file_id")
-			return
+			writeOpenAIError(c, http.StatusBadRequest, "invalid_request", field+" 必须且只能提供 url 或 file_id")
+			return "", false
 		}
 		if fileID != "" {
 			if !mediadomain.IsInputAssetID(fileID) {
-				writeOpenAIError(c, http.StatusBadRequest, "invalid_request", "image.file_id 无效")
+				writeOpenAIError(c, http.StatusBadRequest, "invalid_request", field+".file_id 无效")
+				return "", false
+			}
+			return gateway.VideoInputFileReference(fileID), true
+		}
+		return urlValue, true
+	}
+
+	duration := 0
+	aspectRatio := ""
+	resolution := ""
+	imageURL := ""
+	referenceURLs := []string{}
+	videoURL := ""
+
+	if operation == gatewayVideoOperationGenerate {
+		var err error
+		duration, err = parseVideoDuration(request.Duration)
+		if err != nil {
+			writeOpenAIError(c, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		aspectRatio = strings.TrimSpace(request.AspectRatio)
+		if aspectRatio == "" {
+			aspectRatio = "16:9"
+		}
+		if !validVideoAspectRatio(aspectRatio) {
+			writeOpenAIError(c, http.StatusBadRequest, "invalid_request", "aspect_ratio 必须是 1:1、16:9、9:16、4:3、3:4、3:2 或 2:3")
+			return
+		}
+		resolution = strings.ToLower(strings.TrimSpace(request.Resolution))
+		if resolution == "" {
+			resolution = "720p"
+		}
+		if resolution != "480p" && resolution != "720p" && resolution != "1080p" {
+			writeOpenAIError(c, http.StatusBadRequest, "invalid_request", "resolution 必须是 480p、720p 或 1080p")
+			return
+		}
+		if request.Image != nil {
+			value, ok := parseVideoImage(*request.Image, "image")
+			if !ok {
 				return
 			}
-			referenceURLs = append(referenceURLs, gateway.VideoInputFileReference(fileID))
+			imageURL = value
+		}
+		referenceURLs = make([]string, 0, len(request.ReferenceImages))
+		for _, input := range request.ReferenceImages {
+			value, ok := parseVideoImage(input, "reference_images")
+			if !ok {
+				return
+			}
+			referenceURLs = append(referenceURLs, value)
+		}
+		totalImages := len(referenceURLs)
+		if imageURL != "" {
+			totalImages++
+		}
+		if totalImages > mediadomain.MaxInputImages {
+			writeOpenAIError(c, http.StatusBadRequest, "invalid_request", fmt.Sprintf("image 与 reference_images 合计不能超过 %d 张", mediadomain.MaxInputImages))
+			return
+		}
+		if prompt == "" && imageURL == "" && len(referenceURLs) == 0 {
+			writeOpenAIError(c, http.StatusBadRequest, "invalid_request", "文本生视频必须提供 prompt；图片生视频可以省略 prompt")
+			return
+		}
+		if request.Video != nil {
+			writeOpenAIError(c, http.StatusBadRequest, "invalid_request", "视频生成不支持 video 输入")
+			return
+		}
+	} else {
+		if prompt == "" {
+			writeOpenAIError(c, http.StatusBadRequest, "invalid_request", label+"必须提供 prompt")
+			return
+		}
+		if request.Video == nil {
+			writeOpenAIError(c, http.StatusBadRequest, "invalid_request", label+"必须提供 video")
+			return
+		}
+		value, ok := parseVideoImage(*request.Video, "video")
+		if !ok {
+			return
+		}
+		videoURL = value
+		if request.Image != nil || len(request.ReferenceImages) > 0 {
+			writeOpenAIError(c, http.StatusBadRequest, "invalid_request", label+"不支持 image 或 reference_images")
+			return
+		}
+		if strings.TrimSpace(request.AspectRatio) != "" || strings.TrimSpace(request.Resolution) != "" {
+			writeOpenAIError(c, http.StatusBadRequest, "invalid_request", label+"不支持 aspect_ratio 或 resolution")
+			return
+		}
+		if operation == gatewayVideoOperationEdit {
+			if hasJSONValue(request.Duration) {
+				writeOpenAIError(c, http.StatusBadRequest, "invalid_request", "视频编辑不支持 duration")
+				return
+			}
 		} else {
-			referenceURLs = append(referenceURLs, urlValue)
+			// extend: duration optional, default 6, range 2-10
+			if hasJSONValue(request.Duration) {
+				var err error
+				duration, err = parseVideoDuration(request.Duration)
+				if err != nil {
+					writeOpenAIError(c, http.StatusBadRequest, "invalid_request", err.Error())
+					return
+				}
+			} else {
+				duration = 6
+			}
+			if duration < 2 || duration > 10 {
+				writeOpenAIError(c, http.StatusBadRequest, "invalid_request", "视频延长 duration 必须在 2 到 10 秒之间")
+				return
+			}
 		}
 	}
-	if prompt == "" && len(referenceURLs) == 0 {
-		writeOpenAIError(c, http.StatusBadRequest, "invalid_request", "文本生视频必须提供 prompt；图片生视频可以省略 prompt")
-		return
-	}
+
 	clientKey, requestID, ok := requestIdentity(c)
 	if !ok {
 		return
 	}
+	var op provider.VideoOperation
+	switch operation {
+	case gatewayVideoOperationEdit:
+		op = provider.VideoOperationEdit
+	case gatewayVideoOperationExtend:
+		op = provider.VideoOperationExtend
+	default:
+		op = provider.VideoOperationGenerate
+	}
 	job, err := h.gateway.CreateVideo(c.Request.Context(), gateway.VideoInput{
 		RequestID: requestID, ClientKey: clientKey, PublicModel: model,
-		Prompt: prompt, Duration: duration, AspectRatio: aspectRatio, Resolution: resolution,
-		ReferenceURLs: referenceURLs,
+		Operation: op,
+		Prompt:    prompt, Duration: duration, AspectRatio: aspectRatio, Resolution: resolution,
+		ImageURL: imageURL, ReferenceURLs: referenceURLs, VideoURL: videoURL,
 	})
 	if err != nil {
 		writeGatewayError(c, err)

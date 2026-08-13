@@ -153,9 +153,15 @@ func endpointCapabilitiesForDefinition(routes []modeldomain.Route, definition pr
 			available["image_edit"] = definition.Media.ImageEdit
 		case modeldomain.CapabilityVideo:
 			available["video"] = definition.Media.VideoGeneration
+		case modeldomain.CapabilityTTS:
+			available["tts"] = definition.Media.TTS
+		case modeldomain.CapabilitySTT:
+			available["stt"] = definition.Media.STT
+		case modeldomain.CapabilityRealtime:
+			available["realtime"] = definition.Media.Realtime
 		}
 	}
-	order := []string{"completions", "responses", "messages", "image", "image_edit", "video"}
+	order := []string{"completions", "responses", "messages", "image", "image_edit", "video", "tts", "stt", "realtime"}
 	result := make([]string, 0, len(order))
 	for _, capability := range order {
 		if available[capability] {
@@ -410,6 +416,13 @@ func (s *Service) Sync(ctx context.Context) (int, error) {
 		}
 		return value.Val.(int), nil
 	}
+}
+
+// SyncAsync 异步触发全量模型同步，不阻塞调用方。用 context.Background 避免请求超时导致同步中断。
+func (s *Service) SyncAsync(_ context.Context) {
+	s.syncAll.DoChan("all", func() (any, error) {
+		return s.syncAllAccounts(context.Background())
+	})
 }
 
 func (s *Service) syncAllAccounts(ctx context.Context) (int, error) {

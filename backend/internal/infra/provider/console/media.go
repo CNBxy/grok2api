@@ -29,7 +29,9 @@ const (
 	consoleMediaOutputAttempts  = 3
 	consoleVideoPollEvery       = 2 * time.Second
 	consoleMaxEditImages        = 3
-	consoleMaxVideoImages       = 1
+	// Align with the gateway ceiling and official xAI video inputs:
+	// one start frame via image, or multiple references via reference_images.
+	consoleMaxVideoImages = mediadomain.MaxInputImages
 )
 
 type consoleMediaUpstreamError struct {
@@ -430,16 +432,31 @@ func (a *Adapter) GenerateVideo(ctx context.Context, request provider.VideoReque
 	if resolution := strings.TrimSpace(request.Resolution); resolution != "" {
 		payload["resolution"] = resolution
 	}
-	if len(request.ReferenceURLs) == 1 {
+	switch len(request.ReferenceURLs) {
+	case 0:
+		// text-to-video
+	case 1:
 		value := strings.TrimSpace(request.ReferenceURLs[0])
 		if !validConsoleMediaInputURL(value, "image") {
 			return provider.VideoResult{}, errors.New("视频首图必须是 HTTPS URL 或 image data URL")
 		}
 		payload["image"] = map[string]any{"url": value}
+	default:
+		references := make([]map[string]any, 0, len(request.ReferenceURLs))
+		for _, rawURL := range request.ReferenceURLs {
+			value := strings.TrimSpace(rawURL)
+			if !validConsoleMediaInputURL(value, "image") {
+				return provider.VideoResult{}, errors.New("每张视频参考图都必须是 HTTPS URL 或 image data URL")
+			}
+			references = append(references, map[string]any{"url": value})
+		}
+		payload["reference_images"] = references
 	}
 	if _, hasPrompt := payload["prompt"]; !hasPrompt {
 		if _, hasImage := payload["image"]; !hasImage {
-			return provider.VideoResult{}, errors.New("文本生视频必须提供 prompt；图片生视频可以省略 prompt")
+			if _, hasReferences := payload["reference_images"]; !hasReferences {
+				return provider.VideoResult{}, errors.New("文本生视频必须提供 prompt；图片生视频可以省略 prompt")
+			}
 		}
 	}
 

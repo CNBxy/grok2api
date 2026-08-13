@@ -92,7 +92,7 @@ func TestCatalogContainsAllConsoleModelsAndAliases(t *testing.T) {
 	adapter := NewAdapter(Config{}, nil, nil, nil)
 	for model, want := range map[string]string{
 		"grok-4.5": QuotaMode, "grok-imagine-image-quality": QuotaModeImage,
-		"grok-imagine-image": QuotaModeImage, "grok-imagine-video": QuotaModeVideo,
+		"grok-imagine-image": QuotaModeImage, "grok-imagine-video": QuotaModeVideo, "grok-imagine-video-1.5": QuotaModeVideo,
 	} {
 		if got := adapter.QuotaMode(model); got != want {
 			t.Fatalf("QuotaMode(%q) = %q, want %q", model, got, want)
@@ -161,7 +161,7 @@ func TestNormalizeRequestAppliesConsoleContract(t *testing.T) {
 		t.Fatalf("max_output_tokens = %#v", payload["max_output_tokens"])
 	}
 	reasoning, _ := payload["reasoning"].(map[string]any)
-	if reasoning["effort"] != "xhigh" {
+	if reasoning["effort"] != "xhigh" || reasoning["summary"] != "auto" {
 		t.Fatalf("reasoning = %#v", reasoning)
 	}
 	include, _ := payload["include"].([]any)
@@ -355,7 +355,8 @@ func TestNormalizeRequestPreservesMultiAgentDefaultsWithoutInjectingTools(t *tes
 	if err := json.Unmarshal(body, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["max_output_tokens"] != float64(1_000_000) || payload["reasoning"] != nil || payload["store"] != false {
+	reasoningDefault, _ := payload["reasoning"].(map[string]any)
+	if payload["max_output_tokens"] != float64(1_000_000) || payload["store"] != false || reasoningDefault["summary"] != "auto" || reasoningDefault["effort"] != nil {
 		t.Fatalf("multi-agent defaults = %#v", payload)
 	}
 	include, _ := payload["include"].([]any)
@@ -367,7 +368,11 @@ func TestNormalizeRequestPreservesMultiAgentDefaultsWithoutInjectingTools(t *tes
 		t.Fatal(err)
 	}
 	payload = nil
-	if json.Unmarshal(explicit, &payload) != nil || payload["reasoning"].(map[string]any)["effort"] != "xhigh" {
+	if json.Unmarshal(explicit, &payload) != nil {
+		t.Fatalf("explicit multi-agent effort = %#v", payload)
+	}
+	explicitReasoning, _ := payload["reasoning"].(map[string]any)
+	if explicitReasoning["effort"] != "xhigh" || explicitReasoning["summary"] != "auto" {
 		t.Fatalf("explicit multi-agent effort = %#v", payload)
 	}
 }
@@ -400,7 +405,7 @@ func TestNormalizeRequestAppliesConsoleCompatibilityBoundary(t *testing.T) {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["response_format"] != nil || payload["reasoning"] != nil || payload["tool_choice"] != "auto" {
+	if payload["response_format"] != nil || payload["reasoning"] != nil || payload["tool_choice"] != "required" {
 		t.Fatalf("payload boundary = %#v", payload)
 	}
 	include, _ := payload["include"].([]any)
@@ -475,8 +480,12 @@ func TestNormalizeRequestStripsUnsupportedGrok420ReasoningEffort(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload = nil
-	if json.Unmarshal(effortOnly, &payload) != nil || payload["reasoning"] != nil {
-		t.Fatalf("effort-only reasoning must be removed: %#v", payload)
+	if err := json.Unmarshal(effortOnly, &payload); err != nil {
+		t.Fatal(err)
+	}
+	effortOnlyReasoning, _ := payload["reasoning"].(map[string]any)
+	if effortOnlyReasoning["effort"] != nil || effortOnlyReasoning["summary"] != "auto" {
+		t.Fatalf("effort-only reasoning should fall back to readable summary: %#v", payload)
 	}
 
 	withoutEffort, err := normalizeRequest([]byte(`{
@@ -490,8 +499,9 @@ func TestNormalizeRequestStripsUnsupportedGrok420ReasoningEffort(t *testing.T) {
 	if err := json.Unmarshal(withoutEffort, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["reasoning"] != nil {
-		t.Fatalf("base model request should retain the upstream default: %#v", payload)
+	reasoningDefault, _ := payload["reasoning"].(map[string]any)
+	if reasoningDefault["summary"] != "auto" || reasoningDefault["effort"] != nil {
+		t.Fatalf("base model request should request readable reasoning summary: %#v", payload)
 	}
 }
 
@@ -1398,6 +1408,107 @@ func TestConsoleVideoCreatesAndPollsStandardResources(t *testing.T) {
 	}
 	if result.URL != "https://vidgen.x.ai/result.mp4" || result.ContentType != "video/mp4" || progress != 99 {
 		t.Fatalf("video result = %#v, progress = %d", result, progress)
+	}
+}
+
+func TestConsoleVideoPostsReferenceImages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveTestDPoPToken(t, writer, request) {
+			return
+		}
+		verifyTestDPoPProof(t, request)
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/videos/generations":
+			var payload map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Error(err)
+			}
+			if _, exists := payload["image"]; exists {
+				t.Errorf("multi-reference payload must not include image: %#v", payload)
+			}
+			references, ok := payload["reference_images"].([]any)
+			if !ok || len(references) != 3 {
+				t.Errorf("reference_images = %#v", payload["reference_images"])
+			} else {
+				first, _ := references[0].(map[string]any)
+				third, _ := references[2].(map[string]any)
+				if first["url"] != "https://example.com/a.png" || third["url"] != "https://example.com/c.png" {
+					t.Errorf("reference_images = %#v", references)
+				}
+			}
+			_, _ = writer.Write([]byte(`{"request_id":"upstream-video-ref-1"}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/videos/upstream-video-ref-1":
+			_, _ = writer.Write([]byte(`{"status":"done","progress":100,"video":{"url":"https://vidgen.x.ai/result-ref.mp4"}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	adapter, credential := newConsoleTestAdapter(t, server.URL)
+	result, err := adapter.GenerateVideo(context.Background(), provider.VideoRequest{
+		Credential: credential, Prompt: "animate", Duration: 6, AspectRatio: "16:9", Resolution: "720p",
+		ReferenceURLs: []string{
+			"https://example.com/a.png",
+			"https://example.com/b.png",
+			"https://example.com/c.png",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.URL != "https://vidgen.x.ai/result-ref.mp4" || result.ContentType != "video/mp4" {
+		t.Fatalf("video result = %#v", result)
+	}
+}
+
+func TestConsoleVideoRejectsTooManyReferenceImages(t *testing.T) {
+	adapter, credential := newConsoleTestAdapter(t, "https://console.example")
+	references := make([]string, consoleMaxVideoImages+1)
+	for i := range references {
+		references[i] = "https://example.com/" + strings.Repeat("x", i+1) + ".png"
+	}
+	_, err := adapter.GenerateVideo(context.Background(), provider.VideoRequest{
+		Credential: credential, Prompt: "animate", Duration: 6, ReferenceURLs: references,
+	})
+	if err == nil || !strings.Contains(err.Error(), "最多支持") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestConsoleVideoUsesImagineVideo15Model(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveTestDPoPToken(t, writer, request) {
+			return
+		}
+		verifyTestDPoPProof(t, request)
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/videos/generations":
+			var payload map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Error(err)
+			}
+			if payload["model"] != "grok-imagine-video-1.5" {
+				t.Errorf("video model = %#v", payload["model"])
+			}
+			_, _ = writer.Write([]byte(`{"request_id":"upstream-video-15"}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/videos/upstream-video-15":
+			_, _ = writer.Write([]byte(`{"status":"done","progress":100,"video":{"url":"https://vidgen.x.ai/result-15.mp4"}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	adapter, credential := newConsoleTestAdapter(t, server.URL)
+	result, err := adapter.GenerateVideo(context.Background(), provider.VideoRequest{
+		Credential: credential, Model: "grok-imagine-video-1.5", Prompt: "animate", Duration: 6, AspectRatio: "16:9", Resolution: "720p",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.URL != "https://vidgen.x.ai/result-15.mp4" {
+		t.Fatalf("video result = %#v", result)
 	}
 }
 

@@ -141,18 +141,23 @@ func normalizeReasoning(payload map[string]any, spec ModelSpec) {
 	reasoning, _ := payload["reasoning"].(map[string]any)
 	if reasoning == nil {
 		if spec.DefaultReasoningEffort == "" {
-			delete(payload, "reasoning")
+			// Console chat/completions often omit reasoning.summary. Request a
+			// readable summary so downstream clients can surface thinking text.
+			payload["reasoning"] = map[string]any{"summary": "auto"}
 			return
 		}
 		reasoning = make(map[string]any)
 	}
 	if !spec.SupportsReasoningEffort {
 		delete(reasoning, "effort")
+		if _, exists := reasoning["summary"]; !exists {
+			reasoning["summary"] = "auto"
+		}
 		if len(reasoning) == 0 {
 			delete(payload, "reasoning")
-		} else {
-			payload["reasoning"] = reasoning
+			return
 		}
+		payload["reasoning"] = reasoning
 		return
 	}
 	effort, _ := reasoning["effort"].(string)
@@ -162,6 +167,17 @@ func normalizeReasoning(payload map[string]any, spec ModelSpec) {
 	}
 	if effort != "" {
 		reasoning["effort"] = effort
+	}
+	if effort == "none" {
+		delete(reasoning, "summary")
+	} else if _, exists := reasoning["summary"]; !exists {
+		// Prefer an explicit client summary, otherwise ask Console for readable
+		// thinking text that Chat Completions can map to reasoning_content.
+		reasoning["summary"] = "auto"
+	}
+	if len(reasoning) == 0 {
+		delete(payload, "reasoning")
+		return
 	}
 	payload["reasoning"] = reasoning
 }
@@ -255,6 +271,7 @@ func normalizeConsoleTools(payload map[string]any, disallowsClientTools bool) co
 				clean["enable_image_search"] = enabled
 			}
 			result = append(result, clean)
+			retainedClientTools = true
 		case "x_search":
 			if disallowsClientTools {
 				if _, exists := seenServerTools["x_search"]; exists {
@@ -289,6 +306,7 @@ func normalizeConsoleTools(payload map[string]any, disallowsClientTools bool) co
 				}
 			}
 			result = append(result, clean)
+			retainedClientTools = true
 		case "function":
 			name, _ := tool["name"].(string)
 			if strings.TrimSpace(name) == "" {

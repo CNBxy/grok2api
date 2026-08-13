@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	domain "github.com/chenyme/grok2api/backend/internal/domain/egress"
+	"github.com/chenyme/grok2api/backend/internal/infra/security"
 )
 
 func TestParseProxySubscriptionAcceptsPlainAndBase64Lists(t *testing.T) {
@@ -43,6 +46,30 @@ func TestParseProxySubscriptionAcceptsPlainAndBase64Lists(t *testing.T) {
 func TestParseProxySubscriptionRejectsNoUsableEntries(t *testing.T) {
 	if _, _, err := parseProxySubscription("# only comments\nfile:///tmp/proxies\n"); err == nil {
 		t.Fatal("invalid proxy subscription was accepted")
+	}
+}
+
+func TestParseProxySubscriptionImportsSupportedTunnelSchemes(t *testing.T) {
+	vmess := "vmess://" + base64.RawStdEncoding.EncodeToString([]byte(`{"v":"2","ps":"node","add":"proxy.example","port":"443","id":"123e4567-e89b-12d3-a456-426614174000","aid":"0","scy":"auto","net":"tcp"}`))
+	entries, skipped, err := parseProxySubscription(strings.Join([]string{
+		"http://proxy.example:8080",
+		"trojan://password@proxy.example:443#remark",
+		"vless://123e4567-e89b-12d3-a456-426614174000@proxy.example:443?encryption=none#remark",
+		"ss://YWVzLTEyOC1nY206c2VjcmV0@proxy.example:8388#remark",
+		vmess,
+		"hysteria2://proxy.example:443",
+		"tuic://user:pass@proxy.example:443",
+	}, "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 5 || skipped != 2 || entries[0].ProxyURL != "http://proxy.example:8080" {
+		t.Fatalf("entries=%#v skipped=%d", entries, skipped)
+	}
+	for _, entry := range entries[1:] {
+		if strings.Contains(entry.ProxyURL, "#") {
+			t.Fatalf("subscription remark was retained: %q", entry.ProxyURL)
+		}
 	}
 }
 
@@ -116,5 +143,16 @@ func TestSubscriptionTransportSupportsConfiguredProxyProtocols(t *testing.T) {
 			t.Fatalf("proxy %s: %v", proxyURL, err)
 		}
 		transport.CloseIdleConnections()
+	}
+}
+
+func TestSubscriptionFetchProxyRejectsCorruptSourceSecret(t *testing.T) {
+	cipher, err := security.NewCipher("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{cipher: cipher}
+	if _, err := service.subscriptionFetchProxy(domain.SubscriptionSource{EncryptedProxyURL: "not-ciphertext"}); err == nil {
+		t.Fatal("corrupt per-source subscription proxy was accepted")
 	}
 }

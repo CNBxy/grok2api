@@ -25,6 +25,7 @@ const (
 	StatsigModeURL                = "url"
 	ClearanceModeManual           = "manual"
 	ClearanceModeFlareSolverr     = "flaresolverr"
+	ClearanceModeOnDemand         = "on_demand"
 	DefaultStatsigSignerURL       = "https://grok.wodf.de/sign"
 	DefaultFlareSolverrURL        = "http://flaresolverr:8191"
 	RecommendedBuildClientVersion = "0.2.119"
@@ -138,6 +139,7 @@ type AuthConfig struct {
 	AccessTokenTTL  Duration `yaml:"accessTokenTTL"`
 	RefreshTokenTTL Duration `yaml:"refreshTokenTTL"`
 	SecureCookies   bool     `yaml:"secureCookies"`
+	ManagementKey   string   `yaml:"managementKey"`
 }
 
 type ProviderConfig struct {
@@ -283,6 +285,8 @@ type AccountsConfig struct {
 	AutoCleanReauthInterval              Duration
 	AutoCleanReauthMinAge                Duration
 	AutoCleanIncludeDisabled             bool
+  AutoDisableBuildBotEnabled   bool
+	AutoDisableBuildBotInterval  Duration
 }
 
 type Secrets struct {
@@ -567,12 +571,12 @@ func (c Config) Validate() error {
 	}
 	switch c.Provider.Web.ClearanceMode {
 	case ClearanceModeManual:
-	case ClearanceModeFlareSolverr:
+	case ClearanceModeFlareSolverr, ClearanceModeOnDemand:
 		if err := validateFlareSolverrURL(c.Provider.Web.FlareSolverrURL); err != nil {
 			return fmt.Errorf("provider.web FlareSolverr URL 无效: %w", err)
 		}
 	default:
-		return errors.New("provider.web Clearance 模式必须是 manual 或 flaresolverr")
+		return errors.New("provider.web Clearance 模式必须是 manual、flaresolverr 或 on_demand")
 	}
 	if c.Provider.Web.ClearanceTimeout.Value() < 10*time.Second || c.Provider.Web.ClearanceTimeout.Value() > 5*time.Minute {
 		return errors.New("provider.web Clearance 超时必须在 10 秒到 5 分钟之间")
@@ -658,6 +662,9 @@ func (c Config) Validate() error {
 	if c.Accounts.AutoCleanReauthMinAge.Value() < time.Minute || c.Accounts.AutoCleanReauthMinAge.Value() > 30*24*time.Hour {
 		return errors.New("accounts.autoCleanReauthMinAge 必须在 1 分钟到 30 天之间")
 	}
+	if c.Accounts.AutoDisableBuildBotInterval.Value() < time.Minute || c.Accounts.AutoDisableBuildBotInterval.Value() > time.Hour {
+		return errors.New("accounts.autoDisableBuildBotInterval 必须在 1 分钟到 1 小时之间")
+  }
 	if len(c.Accounts.BuildForbiddenReauthCodes) > 32 {
 		return errors.New("accounts.buildForbiddenReauthCodes 最多支持 32 个错误码")
 	}
@@ -850,13 +857,15 @@ func defaultConfig() Config {
 		},
 		ClientKeyDefaults: ClientKeyDefaultsConfig{RPMLimit: clientkeydomain.DefaultRPMLimit, MaxConcurrent: clientkeydomain.DefaultMaxConcurrent},
 		Accounts: AccountsConfig{
-			MarkBuildForbiddenReauth:             false,
-			BuildForbiddenReauthCodes:            []string{"permission-denied"},
-			ExcludeBuildBotFlaggedFromScheduling: false,
-			AutoCleanReauthEnabled:               false,
-			AutoCleanReauthInterval:              Duration(10 * time.Minute),
-			AutoCleanReauthMinAge:                Duration(time.Hour),
-			AutoCleanIncludeDisabled:             false,
+			MarkBuildForbiddenReauth:  false,
+			BuildForbiddenReauthCodes: []string{"permission-denied"},
+      ExcludeBuildBotFlaggedFromScheduling: false,
+			AutoCleanReauthEnabled:    false,
+			AutoCleanReauthInterval:   Duration(10 * time.Minute),
+			AutoCleanReauthMinAge:     Duration(time.Hour),
+			AutoCleanIncludeDisabled:  false,
+			AutoDisableBuildBotEnabled:   false,
+			AutoDisableBuildBotInterval:  Duration(10 * time.Minute),
 		},
 	}
 }

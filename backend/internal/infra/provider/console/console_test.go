@@ -41,17 +41,25 @@ func TestCatalogContainsAllConsoleModelsAndAliases(t *testing.T) {
 		capability modeldomain.Capability
 	}
 	expected := map[routeKey]string{
-		{publicID: "Console/grok-4.3", capability: modeldomain.CapabilityResponses}:                     "grok-4.3",
-		{publicID: "Console/grok-4.20-0309-reasoning", capability: modeldomain.CapabilityResponses}:     "grok-4.20-0309-reasoning",
-		{publicID: "Console/grok-4.20-0309-non-reasoning", capability: modeldomain.CapabilityResponses}: "grok-4.20-0309-non-reasoning",
-		{publicID: "Console/grok-4.20-multi-agent-0309", capability: modeldomain.CapabilityResponses}:   "grok-4.20-multi-agent-0309",
-		{publicID: "Console/grok-4.5", capability: modeldomain.CapabilityResponses}:                     "grok-4.5",
-		{publicID: "Console/grok-build-0.1", capability: modeldomain.CapabilityResponses}:               "grok-build-0.1",
-		{publicID: "Console/grok-imagine-image-quality", capability: modeldomain.CapabilityImage}:       "grok-imagine-image-quality",
-		{publicID: "Console/grok-imagine-image-quality", capability: modeldomain.CapabilityImageEdit}:   "grok-imagine-image-quality",
-		{publicID: "Console/grok-imagine-image", capability: modeldomain.CapabilityImage}:               "grok-imagine-image",
-		{publicID: "Console/grok-imagine-image", capability: modeldomain.CapabilityImageEdit}:           "grok-imagine-image",
-		{publicID: "Console/grok-imagine-video", capability: modeldomain.CapabilityVideo}:               "grok-imagine-video",
+		{publicID: "Console/grok-4.3", capability: modeldomain.CapabilityResponses}:                       "grok-4.3",
+		{publicID: "Console/grok-4.20-0309-reasoning", capability: modeldomain.CapabilityResponses}:       "grok-4.20-0309-reasoning",
+		{publicID: "Console/grok-4.20-0309-non-reasoning", capability: modeldomain.CapabilityResponses}:   "grok-4.20-0309-non-reasoning",
+		{publicID: "Console/grok-4.20-multi-agent-0309", capability: modeldomain.CapabilityResponses}:     "grok-4.20-multi-agent-0309",
+		{publicID: "Console/grok-4.5", capability: modeldomain.CapabilityResponses}:                       "grok-4.5",
+		{publicID: "Console/grok-build-0.1", capability: modeldomain.CapabilityResponses}:                 "grok-build-0.1",
+		{publicID: "Console/grok-imagine-image-quality-2.0", capability: modeldomain.CapabilityImage}:     "grok-imagine-image-quality",
+		{publicID: "Console/grok-imagine-image-quality-2.0", capability: modeldomain.CapabilityImageEdit}: "grok-imagine-image-quality",
+		{publicID: "Console/grok-imagine-image-2.0", capability: modeldomain.CapabilityImage}:             "grok-imagine-image",
+		{publicID: "Console/grok-imagine-image-2.0", capability: modeldomain.CapabilityImageEdit}:         "grok-imagine-image",
+		{publicID: "Console/grok-imagine-video", capability: modeldomain.CapabilityVideo}:                 "grok-imagine-video",
+		{publicID: "Console/grok-imagine-video-1.5", capability: modeldomain.CapabilityVideo}:             "grok-imagine-video-1.5",
+		{publicID: "Console/grok-voice-latest", capability: modeldomain.CapabilityRealtime}:               "grok-voice-latest",
+		{publicID: "Console/grok-voice-latest", capability: modeldomain.CapabilityTTS}:                    "grok-voice-latest",
+		{publicID: "Console/grok-voice-think-fast-2.0", capability: modeldomain.CapabilityRealtime}:       "grok-voice-think-fast-2.0",
+		{publicID: "Console/grok-voice-think-fast-2.0", capability: modeldomain.CapabilityTTS}:            "grok-voice-think-fast-2.0",
+		{publicID: "Console/grok-voice-think-fast-1.0", capability: modeldomain.CapabilityRealtime}:       "grok-voice-think-fast-1.0",
+		{publicID: "Console/grok-voice-think-fast-1.0", capability: modeldomain.CapabilityTTS}:            "grok-voice-think-fast-1.0",
+		{publicID: "Console/grok-stt", capability: modeldomain.CapabilitySTT}:                             "grok-stt",
 	}
 	routes := Routes()
 	if len(routes) != len(expected) {
@@ -66,14 +74,15 @@ func TestCatalogContainsAllConsoleModelsAndAliases(t *testing.T) {
 		}
 	}
 	aliases := Aliases()
-	if len(aliases) != 13 {
-		t.Fatalf("aliases = %d, want 13", len(aliases))
+	if len(aliases) != 15 {
+		t.Fatalf("aliases = %d, want 15", len(aliases))
 	}
 	registry := provider.NewRegistry(NewAdapter(Config{}, nil, nil, nil))
 	if registry.SupportsStoredResponses(account.ProviderConsole) {
 		t.Fatal("console must not advertise stored Responses support")
 	}
 	for _, name := range []string{
+		"grok-imagine-image", "grok-imagine-image-quality",
 		"grok-4.3-console", "grok-4.20-0309-reasoning-console",
 		"grok-4.20-0309-non-reasoning-console", "grok-4.20-multi-agent-console", "grok-build-console",
 		"grok-4.3-low", "grok-4.3-medium", "grok-4.3-high",
@@ -91,7 +100,8 @@ func TestCatalogContainsAllConsoleModelsAndAliases(t *testing.T) {
 	adapter := NewAdapter(Config{}, nil, nil, nil)
 	for model, want := range map[string]string{
 		"grok-4.5": QuotaMode, "grok-imagine-image-quality": QuotaModeImage,
-		"grok-imagine-image": QuotaModeImage, "grok-imagine-video": QuotaModeVideo,
+		"grok-imagine-image": QuotaModeImage, "grok-imagine-video": QuotaModeVideo, "grok-imagine-video-1.5": QuotaModeVideo,
+		"grok-voice-latest": QuotaMode, "grok-voice-think-fast-2.0": QuotaMode, "grok-voice-think-fast-1.0": QuotaMode, "grok-stt": QuotaMode,
 	} {
 		if got := adapter.QuotaMode(model); got != want {
 			t.Fatalf("QuotaMode(%q) = %q, want %q", model, got, want)
@@ -160,7 +170,7 @@ func TestNormalizeRequestAppliesConsoleContract(t *testing.T) {
 		t.Fatalf("max_output_tokens = %#v", payload["max_output_tokens"])
 	}
 	reasoning, _ := payload["reasoning"].(map[string]any)
-	if reasoning["effort"] != "xhigh" {
+	if reasoning["effort"] != "xhigh" || reasoning["summary"] != "auto" {
 		t.Fatalf("reasoning = %#v", reasoning)
 	}
 	include, _ := payload["include"].([]any)
@@ -183,6 +193,140 @@ func TestNormalizeRequestAppliesConsoleContract(t *testing.T) {
 	if json.Unmarshal(stateless, &statelessPayload) != nil || statelessPayload["store"] != false || statelessPayload["previous_response_id"] != nil || statelessPayload["service_tier"] != nil || statelessPayload["prompt_cache_key"] != nil {
 		t.Fatalf("stateless payload = %#v", statelessPayload)
 	}
+}
+
+func TestNormalizeRequestForwardsXSearchTimeRangeAndImageSearch(t *testing.T) {
+	spec, ok := Resolve("grok-4.3")
+	if !ok {
+		t.Fatal("grok-4.3 missing")
+	}
+
+	t.Run("forwards enable_image_search on web_search", func(t *testing.T) {
+		body, err := normalizeRequest([]byte(`{
+			"model":"grok-4.3",
+			"tools":[{"type":"web_search","enable_image_search":true,"custom":true}]
+		}`), spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatal(err)
+		}
+		tools, _ := payload["tools"].([]any)
+		if len(tools) != 1 {
+			t.Fatalf("tools = %#v", tools)
+		}
+		webSearch, _ := tools[0].(map[string]any)
+		if webSearch["type"] != "web_search" || webSearch["enable_image_understanding"] != true {
+			t.Fatalf("web_search defaults = %#v", webSearch)
+		}
+		if webSearch["enable_image_search"] != true {
+			t.Fatalf("enable_image_search not forwarded: %#v", webSearch)
+		}
+		if webSearch["custom"] != nil {
+			t.Fatalf("unknown field custom should be stripped: %#v", webSearch)
+		}
+	})
+
+	t.Run("omits enable_image_search when client does not set it", func(t *testing.T) {
+		body, err := normalizeRequest([]byte(`{
+			"model":"grok-4.3",
+			"tools":[{"type":"web_search"}]
+		}`), spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatal(err)
+		}
+		webSearch, _ := payload["tools"].([]any)[0].(map[string]any)
+		if _, exists := webSearch["enable_image_search"]; exists {
+			t.Fatalf("enable_image_search should be absent by default: %#v", webSearch)
+		}
+	})
+
+	t.Run("forwards valid x_search from_date and to_date", func(t *testing.T) {
+		body, err := normalizeRequest([]byte(`{
+			"model":"grok-4.3",
+			"tools":[{"type":"x_search","from_date":"2026-07-01","to_date":"2026-07-23","noise":1}]
+		}`), spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatal(err)
+		}
+		xSearch, _ := payload["tools"].([]any)[0].(map[string]any)
+		if xSearch["type"] != "x_search" || xSearch["enable_video_understanding"] != true {
+			t.Fatalf("x_search defaults = %#v", xSearch)
+		}
+		if xSearch["from_date"] != "2026-07-01" || xSearch["to_date"] != "2026-07-23" {
+			t.Fatalf("date bounds not forwarded: %#v", xSearch)
+		}
+		if xSearch["noise"] != nil {
+			t.Fatalf("unknown field noise should be stripped: %#v", xSearch)
+		}
+	})
+
+	t.Run("drops invalid date formats", func(t *testing.T) {
+		body, err := normalizeRequest([]byte(`{
+			"model":"grok-4.3",
+			"tools":[{"type":"x_search","from_date":"2026-7-01","to_date":"2026-02-30"}]
+		}`), spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatal(err)
+		}
+		xSearch, _ := payload["tools"].([]any)[0].(map[string]any)
+		if xSearch["from_date"] != nil || xSearch["to_date"] != nil {
+			t.Fatalf("invalid dates should be dropped: %#v", xSearch)
+		}
+		if xSearch["type"] != "x_search" || xSearch["enable_video_understanding"] != true {
+			t.Fatalf("x_search defaults should remain: %#v", xSearch)
+		}
+	})
+
+	t.Run("drops inverted date range", func(t *testing.T) {
+		body, err := normalizeRequest([]byte(`{
+			"model":"grok-4.3",
+			"tools":[{"type":"x_search","from_date":"2026-07-24","to_date":"2026-07-23"}]
+		}`), spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatal(err)
+		}
+		xSearch, _ := payload["tools"].([]any)[0].(map[string]any)
+		if xSearch["from_date"] != nil || xSearch["to_date"] != nil {
+			t.Fatalf("inverted range should drop both bounds: %#v", xSearch)
+		}
+	})
+
+	t.Run("keeps only from_date when to_date absent", func(t *testing.T) {
+		body, err := normalizeRequest([]byte(`{
+			"model":"grok-4.3",
+			"tools":[{"type":"x_search","from_date":"2026-08-01"}]
+		}`), spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatal(err)
+		}
+		xSearch, _ := payload["tools"].([]any)[0].(map[string]any)
+		if xSearch["from_date"] != "2026-08-01" || xSearch["to_date"] != nil {
+			t.Fatalf("single bound = %#v", xSearch)
+		}
+	})
 }
 
 func TestNormalizeRequestDoesNotInjectToolsForConsoleCatalog(t *testing.T) {
@@ -220,7 +364,8 @@ func TestNormalizeRequestPreservesMultiAgentDefaultsWithoutInjectingTools(t *tes
 	if err := json.Unmarshal(body, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["max_output_tokens"] != float64(1_000_000) || payload["reasoning"] != nil || payload["store"] != false {
+	reasoningDefault, _ := payload["reasoning"].(map[string]any)
+	if payload["max_output_tokens"] != float64(1_000_000) || payload["store"] != false || reasoningDefault["summary"] != "auto" || reasoningDefault["effort"] != nil {
 		t.Fatalf("multi-agent defaults = %#v", payload)
 	}
 	include, _ := payload["include"].([]any)
@@ -232,7 +377,11 @@ func TestNormalizeRequestPreservesMultiAgentDefaultsWithoutInjectingTools(t *tes
 		t.Fatal(err)
 	}
 	payload = nil
-	if json.Unmarshal(explicit, &payload) != nil || payload["reasoning"].(map[string]any)["effort"] != "xhigh" {
+	if json.Unmarshal(explicit, &payload) != nil {
+		t.Fatalf("explicit multi-agent effort = %#v", payload)
+	}
+	explicitReasoning, _ := payload["reasoning"].(map[string]any)
+	if explicitReasoning["effort"] != "xhigh" || explicitReasoning["summary"] != "auto" {
 		t.Fatalf("explicit multi-agent effort = %#v", payload)
 	}
 }
@@ -265,7 +414,7 @@ func TestNormalizeRequestAppliesConsoleCompatibilityBoundary(t *testing.T) {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["response_format"] != nil || payload["reasoning"] != nil || payload["tool_choice"] != "auto" {
+	if payload["response_format"] != nil || payload["reasoning"] != nil || payload["tool_choice"] != "required" {
 		t.Fatalf("payload boundary = %#v", payload)
 	}
 	include, _ := payload["include"].([]any)
@@ -340,8 +489,12 @@ func TestNormalizeRequestStripsUnsupportedGrok420ReasoningEffort(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload = nil
-	if json.Unmarshal(effortOnly, &payload) != nil || payload["reasoning"] != nil {
-		t.Fatalf("effort-only reasoning must be removed: %#v", payload)
+	if err := json.Unmarshal(effortOnly, &payload); err != nil {
+		t.Fatal(err)
+	}
+	effortOnlyReasoning, _ := payload["reasoning"].(map[string]any)
+	if effortOnlyReasoning["effort"] != nil || effortOnlyReasoning["summary"] != "auto" {
+		t.Fatalf("effort-only reasoning should fall back to readable summary: %#v", payload)
 	}
 
 	withoutEffort, err := normalizeRequest([]byte(`{
@@ -355,8 +508,9 @@ func TestNormalizeRequestStripsUnsupportedGrok420ReasoningEffort(t *testing.T) {
 	if err := json.Unmarshal(withoutEffort, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["reasoning"] != nil {
-		t.Fatalf("base model request should retain the upstream default: %#v", payload)
+	reasoningDefault, _ := payload["reasoning"].(map[string]any)
+	if reasoningDefault["summary"] != "auto" || reasoningDefault["effort"] != nil {
+		t.Fatalf("base model request should request readable reasoning summary: %#v", payload)
 	}
 }
 
@@ -1266,6 +1420,216 @@ func TestConsoleVideoCreatesAndPollsStandardResources(t *testing.T) {
 	}
 }
 
+func TestConsoleVideoPostsReferenceImages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveTestDPoPToken(t, writer, request) {
+			return
+		}
+		verifyTestDPoPProof(t, request)
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/videos/generations":
+			var payload map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Error(err)
+			}
+			if _, exists := payload["image"]; exists {
+				t.Errorf("multi-reference payload must not include image: %#v", payload)
+			}
+			references, ok := payload["reference_images"].([]any)
+			if !ok || len(references) != 3 {
+				t.Errorf("reference_images = %#v", payload["reference_images"])
+			} else {
+				first, _ := references[0].(map[string]any)
+				third, _ := references[2].(map[string]any)
+				if first["url"] != "https://example.com/a.png" || third["url"] != "https://example.com/c.png" {
+					t.Errorf("reference_images = %#v", references)
+				}
+			}
+			_, _ = writer.Write([]byte(`{"request_id":"upstream-video-ref-1"}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/videos/upstream-video-ref-1":
+			_, _ = writer.Write([]byte(`{"status":"done","progress":100,"video":{"url":"https://vidgen.x.ai/result-ref.mp4"}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	adapter, credential := newConsoleTestAdapter(t, server.URL)
+	result, err := adapter.GenerateVideo(context.Background(), provider.VideoRequest{
+		Credential: credential, Prompt: "animate", Duration: 6, AspectRatio: "16:9", Resolution: "720p",
+		ReferenceURLs: []string{
+			"https://example.com/a.png",
+			"https://example.com/b.png",
+			"https://example.com/c.png",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.URL != "https://vidgen.x.ai/result-ref.mp4" || result.ContentType != "video/mp4" {
+		t.Fatalf("video result = %#v", result)
+	}
+}
+
+func TestConsoleVideoPostsSingleReferenceImage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveTestDPoPToken(t, writer, request) {
+			return
+		}
+		verifyTestDPoPProof(t, request)
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/videos/generations":
+			var payload map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Error(err)
+			}
+			if _, exists := payload["image"]; exists {
+				t.Errorf("single reference must not coerce to image: %#v", payload)
+			}
+			references, ok := payload["reference_images"].([]any)
+			if !ok || len(references) != 1 {
+				t.Errorf("reference_images = %#v", payload["reference_images"])
+			} else {
+				first, _ := references[0].(map[string]any)
+				if first["url"] != "https://example.com/ref-only.png" {
+					t.Errorf("reference_images = %#v", references)
+				}
+			}
+			_, _ = writer.Write([]byte(`{"request_id":"upstream-video-ref-single"}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/videos/upstream-video-ref-single":
+			_, _ = writer.Write([]byte(`{"status":"done","progress":100,"video":{"url":"https://vidgen.x.ai/result-ref-single.mp4"}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	adapter, credential := newConsoleTestAdapter(t, server.URL)
+	result, err := adapter.GenerateVideo(context.Background(), provider.VideoRequest{
+		Credential: credential, Prompt: "animate", Duration: 6, AspectRatio: "16:9", Resolution: "720p",
+		ReferenceURLs: []string{"https://example.com/ref-only.png"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.URL != "https://vidgen.x.ai/result-ref-single.mp4" {
+		t.Fatalf("video result = %#v", result)
+	}
+}
+
+func TestConsoleVideoPostsFirstFrameAndReferences(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveTestDPoPToken(t, writer, request) {
+			return
+		}
+		verifyTestDPoPProof(t, request)
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/videos/generations":
+			var payload map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Error(err)
+			}
+			image, ok := payload["image"].(map[string]any)
+			if !ok || image["url"] != "https://example.com/first.png" {
+				t.Errorf("image = %#v", payload["image"])
+			}
+			references, ok := payload["reference_images"].([]any)
+			if !ok || len(references) != 1 {
+				t.Errorf("reference_images = %#v", payload["reference_images"])
+			} else {
+				first, _ := references[0].(map[string]any)
+				if first["url"] != "https://example.com/ref.png" {
+					t.Errorf("reference_images = %#v", references)
+				}
+			}
+			_, _ = writer.Write([]byte(`{"request_id":"upstream-video-both"}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/videos/upstream-video-both":
+			_, _ = writer.Write([]byte(`{"status":"done","progress":100,"video":{"url":"https://vidgen.x.ai/result-both.mp4"}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	adapter, credential := newConsoleTestAdapter(t, server.URL)
+	result, err := adapter.GenerateVideo(context.Background(), provider.VideoRequest{
+		Credential: credential, Prompt: "animate", Duration: 6, AspectRatio: "16:9", Resolution: "720p",
+		ImageURL:      "https://example.com/first.png",
+		ReferenceURLs: []string{"https://example.com/ref.png"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.URL != "https://vidgen.x.ai/result-both.mp4" {
+		t.Fatalf("video result = %#v", result)
+	}
+}
+
+func TestConsoleVideoRejectsTooManyReferenceImages(t *testing.T) {
+	adapter, credential := newConsoleTestAdapter(t, "https://console.example")
+	references := make([]string, consoleMaxVideoImages+1)
+	for i := range references {
+		references[i] = "https://example.com/" + strings.Repeat("x", i+1) + ".png"
+	}
+	_, err := adapter.GenerateVideo(context.Background(), provider.VideoRequest{
+		Credential: credential, Prompt: "animate", Duration: 6, ReferenceURLs: references,
+	})
+	if err == nil || !strings.Contains(err.Error(), "最多支持") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestConsoleVideoRejectsTooManyCombinedImages(t *testing.T) {
+	adapter, credential := newConsoleTestAdapter(t, "https://console.example")
+	references := make([]string, consoleMaxVideoImages)
+	for i := range references {
+		references[i] = "https://example.com/" + strings.Repeat("y", i+1) + ".png"
+	}
+	_, err := adapter.GenerateVideo(context.Background(), provider.VideoRequest{
+		Credential: credential, Prompt: "animate", Duration: 6,
+		ImageURL: "https://example.com/first.png", ReferenceURLs: references,
+	})
+	if err == nil || !strings.Contains(err.Error(), "最多支持") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestConsoleVideoUsesImagineVideo15Model(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveTestDPoPToken(t, writer, request) {
+			return
+		}
+		verifyTestDPoPProof(t, request)
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/videos/generations":
+			var payload map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Error(err)
+			}
+			if payload["model"] != "grok-imagine-video-1.5" {
+				t.Errorf("video model = %#v", payload["model"])
+			}
+			_, _ = writer.Write([]byte(`{"request_id":"upstream-video-15"}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/videos/upstream-video-15":
+			_, _ = writer.Write([]byte(`{"status":"done","progress":100,"video":{"url":"https://vidgen.x.ai/result-15.mp4"}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	adapter, credential := newConsoleTestAdapter(t, server.URL)
+	result, err := adapter.GenerateVideo(context.Background(), provider.VideoRequest{
+		Credential: credential, Model: "grok-imagine-video-1.5", Prompt: "animate", Duration: 6, AspectRatio: "16:9", Resolution: "720p",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.URL != "https://vidgen.x.ai/result-15.mp4" {
+		t.Fatalf("video result = %#v", result)
+	}
+}
+
 func TestParseConsoleVideoStatusRejectsUnknownState(t *testing.T) {
 	if _, _, err := parseConsoleVideoStatus([]byte(`{"status":"mystery"}`), nil); err == nil || !strings.Contains(err.Error(), "状态无效") {
 		t.Fatalf("unknown status error = %v", err)
@@ -1476,4 +1840,100 @@ func (r *recordingConsoleEgressRepository) UpdateCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.updates
+}
+
+func TestConsoleVideoEditPostsVideoAndPolls(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveTestDPoPToken(t, writer, request) {
+			return
+		}
+		verifyTestDPoPProof(t, request)
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/videos/edits":
+			var payload map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Error(err)
+			}
+			if payload["model"] != "grok-imagine-video" || payload["prompt"] != "add necklace" {
+				t.Errorf("edit payload = %#v", payload)
+			}
+			if _, exists := payload["duration"]; exists {
+				t.Errorf("edit payload must not include duration: %#v", payload)
+			}
+			video, ok := payload["video"].(map[string]any)
+			if !ok || video["url"] != "https://example.com/source.mp4" {
+				t.Errorf("edit video = %#v", payload["video"])
+			}
+			_, _ = writer.Write([]byte(`{"request_id":"upstream-video-edit-1"}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/videos/upstream-video-edit-1":
+			_, _ = writer.Write([]byte(`{"status":"done","progress":100,"video":{"url":"https://vidgen.x.ai/result-edit.mp4"}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	adapter, credential := newConsoleTestAdapter(t, server.URL)
+	result, err := adapter.GenerateVideo(context.Background(), provider.VideoRequest{
+		Credential: credential, Model: "grok-imagine-video", Operation: provider.VideoOperationEdit,
+		Prompt: "add necklace", VideoURL: "https://example.com/source.mp4",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.URL != "https://vidgen.x.ai/result-edit.mp4" {
+		t.Fatalf("edit result = %#v", result)
+	}
+}
+
+func TestConsoleVideoExtendPostsVideoAndPolls(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveTestDPoPToken(t, writer, request) {
+			return
+		}
+		verifyTestDPoPProof(t, request)
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/videos/extensions":
+			var payload map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Error(err)
+			}
+			if payload["model"] != "grok-imagine-video" || payload["duration"] != float64(4) || payload["prompt"] != "pan left" {
+				t.Errorf("extend payload = %#v", payload)
+			}
+			video, ok := payload["video"].(map[string]any)
+			if !ok || video["url"] != "https://example.com/source.mp4" {
+				t.Errorf("extend video = %#v", payload["video"])
+			}
+			_, _ = writer.Write([]byte(`{"request_id":"upstream-video-extend-1"}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/videos/upstream-video-extend-1":
+			_, _ = writer.Write([]byte(`{"status":"done","progress":100,"video":{"url":"https://vidgen.x.ai/result-extend.mp4"}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	adapter, credential := newConsoleTestAdapter(t, server.URL)
+	result, err := adapter.GenerateVideo(context.Background(), provider.VideoRequest{
+		Credential: credential, Model: "grok-imagine-video", Operation: provider.VideoOperationExtend,
+		Prompt: "pan left", Duration: 4, VideoURL: "https://example.com/source.mp4",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.URL != "https://vidgen.x.ai/result-extend.mp4" {
+		t.Fatalf("extend result = %#v", result)
+	}
+}
+
+func TestConsoleVideoEditRejectsNonImagineVideoModel(t *testing.T) {
+	adapter, credential := newConsoleTestAdapter(t, "http://127.0.0.1")
+	_, err := adapter.GenerateVideo(context.Background(), provider.VideoRequest{
+		Credential: credential, Model: "grok-imagine-video-1.5", Operation: provider.VideoOperationEdit,
+		Prompt: "x", VideoURL: "https://example.com/source.mp4",
+	})
+	if err == nil || !strings.Contains(err.Error(), "grok-imagine-video") {
+		t.Fatalf("err = %v", err)
+	}
 }

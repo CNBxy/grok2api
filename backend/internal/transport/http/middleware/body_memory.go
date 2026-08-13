@@ -94,8 +94,26 @@ func inferenceBodyOperation(path string) string {
 		return "image_generation"
 	case "/v1/images/edits":
 		return "image_edit"
+	case "/v1/tts":
+		return "tts"
+	case "/v1/stt":
+		return "stt"
+	case "/v1/audio/speech", "/v1/audio/tasks":
+		return "tts"
+	case "/v1/audio/transcriptions", "/v1/audio/translations":
+		return "stt"
+	case "/v1/realtime/client_secrets":
+		return "realtime_client_secret"
+	case "/v1/realtime":
+		return "realtime_websocket"
+	case "/v1/custom-voices":
+		return "custom_voices"
 	case "/v1/videos/generations":
 		return "video_generation"
+	case "/v1/videos/edits":
+		return "video_edit"
+	case "/v1/videos/extensions":
+		return "video_extension"
 	default:
 		return "other"
 	}

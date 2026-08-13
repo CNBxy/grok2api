@@ -229,3 +229,38 @@ func TestSecurityHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestCORSPreflightAndActualRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(CORS())
+	router.GET("/v1/models", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	preflight := httptest.NewRequest(http.MethodOptions, "/v1/models", nil)
+	preflight.Header.Set("Origin", "https://inf.freetokens.cc")
+	preflight.Header.Set("Access-Control-Request-Method", "GET")
+	preflight.Header.Set("Access-Control-Request-Headers", "authorization,content-type")
+	preflightResponse := httptest.NewRecorder()
+	router.ServeHTTP(preflightResponse, preflight)
+	if preflightResponse.Code != http.StatusNoContent {
+		t.Fatalf("OPTIONS status = %d", preflightResponse.Code)
+	}
+	if got := preflightResponse.Header().Get("Access-Control-Allow-Origin"); got != "https://inf.freetokens.cc" {
+		t.Fatalf("OPTIONS Allow-Origin = %q", got)
+	}
+	allowHeaders := strings.ToLower(preflightResponse.Header().Get("Access-Control-Allow-Headers"))
+	if !strings.Contains(allowHeaders, "authorization") || !strings.Contains(allowHeaders, "content-type") {
+		t.Fatalf("OPTIONS Allow-Headers = %q", allowHeaders)
+	}
+
+	actual := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	actual.Header.Set("Origin", "https://inf.freetokens.cc")
+	actualResponse := httptest.NewRecorder()
+	router.ServeHTTP(actualResponse, actual)
+	if actualResponse.Code != http.StatusOK {
+		t.Fatalf("GET status = %d", actualResponse.Code)
+	}
+	if got := actualResponse.Header().Get("Access-Control-Allow-Origin"); got != "https://inf.freetokens.cc" {
+		t.Fatalf("GET Allow-Origin = %q", got)
+	}
+}

@@ -2871,6 +2871,9 @@ func (s *Service) refreshQuota(ctx context.Context, id uint64) (quotaRefreshResu
 	if value.Provider == accountdomain.ProviderWeb {
 		s.applyImagineQuotaCooldown(ctx, id, snapshot.Windows)
 	}
+	if value.Provider == accountdomain.ProviderWeb {
+		s.applyImagineQuotaCooldown(ctx, id, snapshot.Windows)
+	}
   s.recordQuotaSyncResult(ctx, value, startedAt, nil)
 	return quotaRefreshResult{Credential: value, Windows: snapshot.Windows}, nil
 }

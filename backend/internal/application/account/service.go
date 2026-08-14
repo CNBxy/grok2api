@@ -429,7 +429,6 @@ type Service struct {
 	buildBotFlagCache      *resultcache.Cache[string, []uint64]
 	logger                 *slog.Logger
 	now                    func() time.Time
-(feat(account): 凭据刷新与额度同步写入操作日志（#15 #16）)
 }
 
 func (s *Service) SetQuotaRecoveryQueue(queue repository.QuotaRecoveryQueue) {
@@ -2785,26 +2784,32 @@ func (s *Service) refreshQuota(ctx context.Context, id uint64) (quotaRefreshResu
 	startedAt := s.now().UTC()
 	adapter, ok := s.providers.Quota(value.Provider)
 	if !ok {
-		return quotaRefreshResult{}, fmt.Errorf("%s Quota Provider 未注册", value.Provider)
+		err := fmt.Errorf("%s Quota Provider 未注册", value.Provider)
+		s.recordQuotaSyncResult(ctx, value, startedAt, err)
+		return quotaRefreshResult{}, err
 	}
 	snapshot, err := adapter.SyncQuota(ctx, value)
 	if err != nil {
 		if errors.Is(err, provider.ErrUnauthorized) {
 			err = errors.Join(err, s.markSSOCredentialRejected(ctx, value, fmt.Sprintf("%s SSO credential rejected", value.Provider)))
 		}
+		s.recordQuotaSyncResult(ctx, value, startedAt, err)
 		return quotaRefreshResult{}, err
 	}
 	quotaKind, _ := s.providers.QuotaKind(value.Provider)
 	if quotaKind == provider.QuotaLocalWindow {
 		existing, loadErr := s.accounts.GetQuotaWindows(ctx, []uint64{id})
 		if loadErr != nil {
+			s.recordQuotaSyncResult(ctx, value, startedAt, loadErr)
 			return quotaRefreshResult{}, loadErr
 		}
 		snapshot.Windows = preserveActiveQuotaWindows(existing[id], snapshot.Windows, s.now())
 	}
 	if err := s.accounts.ReplaceQuotaWindows(ctx, id, snapshot.Tier, snapshot.SyncedAt, snapshot.Windows); err != nil {
+		s.recordQuotaSyncResult(ctx, value, startedAt, err)
 		return quotaRefreshResult{}, err
 	}
+	s.recordQuotaSyncResult(ctx, value, startedAt, nil)
 	return quotaRefreshResult{Credential: value, Windows: snapshot.Windows}, nil
 }
 

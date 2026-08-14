@@ -392,6 +392,7 @@ func (s *Service) Summary(ctx context.Context) (Summary, error) {
 // Service 负责 OAuth 账号接入、刷新、额度和持久化生命周期。
 type Service struct {
 	accounts            repository.AccountRepository
+	operationLogs         repository.AccountOperationLogRepository
 	audits              repository.AuditRepository
 	deviceSessions      repository.DeviceSessionRepository
 	sticky              repository.StickySessionRepository
@@ -428,6 +429,7 @@ type Service struct {
 	buildBotFlagCache      *resultcache.Cache[string, []uint64]
 	logger                 *slog.Logger
 	now                    func() time.Time
+(feat(account): 凭据刷新与额度同步写入操作日志（#15 #16）)
 }
 
 func (s *Service) SetQuotaRecoveryQueue(queue repository.QuotaRecoveryQueue) {
@@ -2244,6 +2246,8 @@ type ensureCredentialOptions struct {
 	bypassCooldown     bool
 	respectSchedule    bool
 	retryPermanentOnce bool
+	// trigger 非空时，在真实上游 RefreshCredential 成功/失败后写入操作日志。
+	trigger accountdomain.OperationTrigger
 }
 
 func (s *Service) ensureCredential(ctx context.Context, value accountdomain.Credential, options ensureCredentialOptions) (accountdomain.Credential, error) {
@@ -2328,10 +2332,12 @@ func (s *Service) ensureCredential(ctx context.Context, value accountdomain.Cred
 		if !ok {
 			return nil, fmt.Errorf("Provider %s 未注册", latest.Provider)
 		}
+		startedAt := currentTime
 		refreshed, err := adapter.RefreshCredential(ctx, latest)
 		if err != nil {
 			persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), credentialRefreshStateTTL)
 			s.recordCredentialRefreshFailure(persistCtx, latest, err, !options.retryPermanentOnce)
+			s.recordCredentialRefreshResult(persistCtx, latest, options.trigger, startedAt, err)
 			cancel()
 			return nil, err
 		}
@@ -2348,6 +2354,7 @@ func (s *Service) ensureCredential(ctx context.Context, value accountdomain.Cred
 		s.invalidateBuildBotFlagCache()
 		s.markRefreshSuccess(latest.ID, currentTime)
 		s.WakeCredentialRefresh()
+		s.recordCredentialRefreshResult(ctx, updated, options.trigger, startedAt, nil)
 		return updated, nil
 	})
 	if err != nil {
@@ -2389,7 +2396,9 @@ func (s *Service) RefreshToken(ctx context.Context, id uint64) (View, error) {
 	if err != nil {
 		return View{}, mapRepositoryError(err)
 	}
-	if _, err := s.ensureCredential(ctx, value, ensureCredentialOptions{force: true, bypassCooldown: true, retryPermanentOnce: true}); err != nil {
+	if _, err := s.ensureCredential(ctx, value, ensureCredentialOptions{
+		force: true, bypassCooldown: true, retryPermanentOnce: true, trigger: accountdomain.OperationTriggerManual,
+	}); err != nil {
 		return View{}, err
 	}
 	return s.Get(ctx, id)
@@ -2587,13 +2596,21 @@ func (s *Service) RefreshBilling(ctx context.Context, id uint64) (accountdomain.
 }
 
 func (s *Service) refreshBilling(ctx context.Context, id uint64) (accountdomain.Billing, error) {
+	startedAt := s.now().UTC()
 	value, billing, err := s.fetchAndSaveBilling(ctx, id)
 	if err != nil {
+		if value.ID != 0 {
+			s.recordQuotaSyncResult(ctx, value, startedAt, err)
+		} else if loaded, getErr := s.accounts.Get(ctx, id); getErr == nil {
+			s.recordQuotaSyncResult(ctx, loaded, startedAt, err)
+		}
 		return accountdomain.Billing{}, err
 	}
 	if err := s.reconcilePaidQuotaRecovery(ctx, value, billing, false); err != nil {
+		s.recordQuotaSyncResult(ctx, value, startedAt, err)
 		return accountdomain.Billing{}, err
 	}
+	s.recordQuotaSyncResult(ctx, value, startedAt, nil)
 	return billing, nil
 }
 
@@ -2765,6 +2782,7 @@ func (s *Service) refreshQuota(ctx context.Context, id uint64) (quotaRefreshResu
 	if err != nil {
 		return quotaRefreshResult{}, mapRepositoryError(err)
 	}
+	startedAt := s.now().UTC()
 	adapter, ok := s.providers.Quota(value.Provider)
 	if !ok {
 		return quotaRefreshResult{}, fmt.Errorf("%s Quota Provider 未注册", value.Provider)
@@ -3674,6 +3692,7 @@ func (s *Service) syncAllQuotasWithProgress(ctx context.Context, providerValue a
 	if err != nil {
 		return 0, 0, err
 	}
+	ctx = withOperationTrigger(ctx, accountdomain.OperationTriggerBatch)
 	return s.runAccountBatch(ctx, operation, ids, s.syncPool, progress, func(workCtx context.Context, id uint64) error {
 		_, err := s.RefreshQuota(workCtx, id)
 		return err
@@ -3682,6 +3701,7 @@ func (s *Service) syncAllQuotasWithProgress(ctx context.Context, providerValue a
 
 // SyncWebQuotaAccounts 同步指定 Web 账号集合，供启动追赶任务复用共享并发池。
 func (s *Service) SyncWebQuotaAccounts(ctx context.Context, ids []uint64) (int, int, error) {
+	ctx = withOperationTrigger(ctx, accountdomain.OperationTriggerScheduler)
 	return s.runAccountBatch(ctx, "web_quota_startup_catchup", ids, s.syncPool, nil, func(workCtx context.Context, id uint64) error {
 		_, err := s.RefreshWebQuota(workCtx, id)
 		return err
@@ -3720,10 +3740,13 @@ func (s *Service) RefreshAllTokensWithProgress(ctx context.Context, progress Bat
 }
 
 func (s *Service) refreshTokens(ctx context.Context, ids []uint64, progress BatchProgressObserver) (int, int, error) {
+	ctx = withOperationTrigger(ctx, accountdomain.OperationTriggerBatch)
 	return s.runAccountBatch(ctx, "credential_refresh", ids, s.refreshPool, progress, func(workCtx context.Context, id uint64) error {
 		value, err := s.accounts.Get(workCtx, id)
 		if err == nil {
-			_, err = s.ensureCredential(workCtx, value, ensureCredentialOptions{force: true, bypassCooldown: true, retryPermanentOnce: true})
+			_, err = s.ensureCredential(workCtx, value, ensureCredentialOptions{
+				force: true, bypassCooldown: true, retryPermanentOnce: true, trigger: accountdomain.OperationTriggerBatch,
+			})
 		}
 		return err
 	})
@@ -3739,6 +3762,7 @@ func (s *Service) BatchRefreshTokens(ctx context.Context, ids []uint64) (int, in
 	if s.providers == nil {
 		return 0, 0, 0, fmt.Errorf("Provider 注册表未初始化")
 	}
+	ctx = withOperationTrigger(ctx, accountdomain.OperationTriggerBatch)
 	refreshableIDs := make([]uint64, 0, len(values))
 	for _, id := range values {
 		value, getErr := s.accounts.Get(ctx, id)
@@ -3746,6 +3770,16 @@ func (s *Service) BatchRefreshTokens(ctx context.Context, ids []uint64) (int, in
 			return 0, 0, 0, getErr
 		}
 		if !s.providers.SupportsCredentialRefresh(value.Provider) || !value.Enabled || value.EncryptedRefreshToken == "" {
+			reason := "account is not eligible for credential refresh"
+			switch {
+			case !s.providers.SupportsCredentialRefresh(value.Provider):
+				reason = "provider does not support credential refresh"
+			case !value.Enabled:
+				reason = "account is disabled"
+			case value.EncryptedRefreshToken == "":
+				reason = "refresh token is missing"
+			}
+			s.recordSkippedCredentialRefresh(ctx, value, reason)
 			continue
 		}
 		refreshableIDs = append(refreshableIDs, id)
@@ -3761,6 +3795,7 @@ func (s *Service) BatchRefreshBilling(ctx context.Context, ids []uint64) (int, i
 	if err != nil {
 		return 0, 0, err
 	}
+	ctx = withOperationTrigger(ctx, accountdomain.OperationTriggerBatch)
 	return s.refreshBillings(ctx, values, nil)
 }
 
@@ -4179,6 +4214,7 @@ func (s *Service) BatchRefreshQuota(ctx context.Context, ids []uint64) (int, int
 	if err != nil {
 		return 0, 0, err
 	}
+	ctx = withOperationTrigger(ctx, accountdomain.OperationTriggerBatch)
 	return s.runAccountBatch(ctx, "quota_sync", values, s.syncPool, nil, func(workCtx context.Context, id uint64) error {
 		_, err := s.RefreshQuota(workCtx, id)
 		return err

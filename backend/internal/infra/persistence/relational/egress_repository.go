@@ -16,6 +16,12 @@ type EgressRepository struct{ db *Database }
 
 func NewEgressRepository(db *Database) *EgressRepository { return &EgressRepository{db: db} }
 
+func (r *EgressRepository) ListDisabledEgressNodeIDs(ctx context.Context) ([]uint64, error) {
+	var ids []uint64
+	err := r.db.db.WithContext(ctx).Model(&egressNodeModel{}).Where("enabled = ?", false).Pluck("id", &ids).Error
+	return ids, mapError(err)
+}
+
 func (r *EgressRepository) ListEgressNodes(ctx context.Context, scope egress.Scope, sort repository.SortQuery) ([]egress.Node, error) {
 	query := r.db.db.WithContext(ctx).Model(&egressNodeModel{})
 	if scope != "" {

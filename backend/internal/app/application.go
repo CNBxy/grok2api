@@ -29,6 +29,7 @@ import (
 	updatecheckapp "github.com/chenyme/grok2api/backend/internal/application/updatecheck"
 	"github.com/chenyme/grok2api/backend/internal/buildinfo"
 	"github.com/chenyme/grok2api/backend/internal/domain/account"
+	auditdomain "github.com/chenyme/grok2api/backend/internal/domain/audit"
 	"github.com/chenyme/grok2api/backend/internal/infra/config"
 	infraegress "github.com/chenyme/grok2api/backend/internal/infra/egress"
 	inframedia "github.com/chenyme/grok2api/backend/internal/infra/media"
@@ -354,6 +355,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	gatewayService.UpdateVideoMaxAttempts(cfg.Routing.VideoMaxAttempts)
 	gatewayService.UpdateMarkBuildChatDeniedAsReauth(cfg.Routing.MarkBuildChatDeniedAsReauth)
 	gatewayService.SetLogger(logger)
+	gatewayService.SetDegradeExclusionSource(auditRepo.ListDegradeAccountIDs, egressRepo.ListDisabledEgressNodeIDs)
+	applyDegradeExclusion(gatewayService, cfg)
 	egressService.SetQualityProber(gatewayService)
 	gatewayService.UpdateBuildForbiddenReauthPolicy(cfg.Accounts.MarkBuildForbiddenReauth, cfg.Accounts.BuildForbiddenReauthCodes)
 	gatewayService.UpdateRequestTimeout(cfg.Server.RequestTimeout.Value())
@@ -402,6 +405,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		selector.UpdateSegmentedSelector(next.Routing.SegmentedSelectorEnabled, next.Routing.SegmentedMinCandidates, next.Routing.SegmentedWindowSize)
 		selector.UpdateExcludeBuildBotFlaggedFromScheduling(next.Accounts.ExcludeBuildBotFlaggedFromScheduling)
 		accountService.UpdateExcludeBuildBotFlaggedFromScheduling(next.Accounts.ExcludeBuildBotFlaggedFromScheduling)
+		applyDegradeExclusion(gatewayService, next)
 		egressManager.UpdateAccountIsolatedConnections(next.Routing.AccountIsolatedConnections)
 		reasoningReplay.UpdateConfig(reasoningreplay.Config{Enabled: next.Routing.ReasoningReplayEnabled, TTL: next.Routing.ReasoningReplayTTL.Value()})
 		gatewayService.UpdateMaxAttempts(next.Routing.MaxAttempts)
@@ -482,6 +486,16 @@ func accountAutoCleanConfig(value config.AccountsConfig) accountapp.AutoCleanCon
 		MinAge:          value.AutoCleanReauthMinAge.Value(),
 		IncludeDisabled: value.AutoCleanIncludeDisabled,
 	}
+}
+
+func applyDegradeExclusion(service *gateway.Service, cfg config.Config) {
+	window := cfg.Accounts.DegradeExclusionWindow.Value()
+	if window <= 0 {
+		window = 7 * 24 * time.Hour
+	}
+	minGen := cfg.QualityGuard.MinimumGenerationWindow.Value().Milliseconds()
+	service.UpdateExcludeRecentDegradeAccounts(cfg.Accounts.ExcludeRecentDegradeAccountsFromScheduling)
+	service.UpdateDegradeExclusionThresholds(cfg.QualityGuard.SoftTPS, cfg.QualityGuard.HardTPS, minGen, auditdomain.DefaultDegradeMinOutput, cfg.QualityGuard.FailClosed, window)
 }
 
 func auditLedgerConfig(value config.AuditConfig) auditapp.LedgerConfig {
@@ -589,6 +603,18 @@ func (a *Application) Run(ctx context.Context) error {
 	})
 	startBackground("account_auto_clean", func(taskCtx context.Context) error {
 		a.accounts.RunAccountAutoClean(taskCtx)
+		return nil
+	})
+	startBackground("degrade_exclusion_refresh", func(taskCtx context.Context) error {
+		if err := a.gateway.RefreshDegradeExclusion(taskCtx); err != nil {
+			a.logger.Warn("degrade_exclusion_refresh_failed", "error", err)
+		}
+		a.runPeriodicTask(taskCtx, 15*time.Second, "degrade_exclusion_refresh", func(runCtx context.Context) error {
+			if err := a.gateway.RefreshDegradeExclusion(runCtx); err != nil {
+				a.logger.Warn("degrade_exclusion_refresh_failed", "error", err)
+			}
+			return nil
+		})
 		return nil
 	})
 	startBackground("statsig_warmup", func(taskCtx context.Context) error {

@@ -906,6 +906,19 @@ func (r *AuditRepository) SummarizeDegrade(ctx context.Context, input repository
 	return result, err
 }
 
+func (r *AuditRepository) ListDegradeAccountIDs(ctx context.Context, input repository.DegradeAccountIDQuery) ([]uint64, error) {
+	classified := r.degradeClassifiedQuery(r.db.db.WithContext(ctx), repository.DegradeSummaryQuery{
+		Start: input.Start, End: input.End, SoftTPS: input.SoftTPS, HardTPS: input.HardTPS,
+		MinGenerationMS: input.MinGenerationMS, MinOutputTokens: input.MinOutputTokens, FailClosed: input.FailClosed,
+	})
+	var ids []uint64
+	err := r.db.db.WithContext(ctx).Table("(?) AS d", classified).
+		Select("DISTINCT d.account_id").
+		Where("d.account_id IS NOT NULL AND d.account_id > 0").
+		Scan(&ids).Error
+	return ids, err
+}
+
 func (r *AuditRepository) degradeClassifiedQuery(tx *gorm.DB, input repository.DegradeSummaryQuery) *gorm.DB {
 	castType := "REAL"
 	if r.db.dialect == "postgres" {

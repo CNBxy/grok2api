@@ -227,6 +227,16 @@ func TestEnabledQualityGuardUsesManagedIdentity(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigEnablesDegradeExclusion(t *testing.T) {
+	value := defaultConfig()
+	if !value.Accounts.ExcludeRecentDegradeAccountsFromScheduling {
+		t.Fatal("degrade exclusion should default on")
+	}
+	if value.Accounts.DegradeExclusionWindow.Value() != 7*24*time.Hour {
+		t.Fatalf("window = %s", value.Accounts.DegradeExclusionWindow.Value())
+	}
+}
+
 func TestBuildResponseHeaderTimeoutIsRuntimeOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(path, []byte("provider:\n  build:\n    responseHeaderTimeout: 10m\n"), 0o600); err != nil {

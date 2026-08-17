@@ -98,10 +98,10 @@ type ProviderBuildConfig struct {
 
 // RoutingConfig 定义会话粘性、冷却和故障切换边界。
 type RoutingConfig struct {
-	StickyTTL       time.Duration
-	CooldownBase    time.Duration
-	CooldownMax     time.Duration
-	CapacityWait    time.Duration
+	StickyTTL        time.Duration
+	CooldownBase     time.Duration
+	CooldownMax      time.Duration
+	CapacityWait     time.Duration
 	MaxAttempts      int
 	VideoMaxAttempts int
 	PreferFreeBuild  bool
@@ -141,6 +141,9 @@ type AccountsConfig struct {
 	// ExcludeBuildBotFlaggedFromScheduling 为 true 时，bot_flag_source/bfs∈{1,2} 的 Build 账号不参与调度。
 	// 仅影响 ProviderBuild 选号；关联 Web/Console 账号调度不受影响。
 	ExcludeBuildBotFlaggedFromScheduling bool
+	// ExcludeRecentDegradeAccountsFromScheduling 为 true 时，近 7 天降智账号与已禁用出口节点上的账号不参与调度。
+	// 指针用于区分旧快照缺失字段（沿用配置默认值）与管理端显式关闭。
+	ExcludeRecentDegradeAccountsFromScheduling *bool
 	// AutoCleanReauthEnabled 为 true 时，周期性删除已标记 reauthRequired 且超过 minAge 的账号。
 	AutoCleanReauthEnabled bool
 	// AutoCleanReauthInterval 自动清理扫描间隔。

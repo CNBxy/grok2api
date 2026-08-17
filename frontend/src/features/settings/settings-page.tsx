@@ -407,6 +407,25 @@ export function SettingsPage() {
                     )}
                   />
                 </SettingsField>
+                <SettingsField
+                  controlId="accounts-exclude-recent-degrade"
+                  label={t("settings.accounts.excludeRecentDegradeAccountsFromScheduling")}
+                  description={t("settings.accounts.excludeRecentDegradeAccountsFromSchedulingHelp")}
+                >
+                  <Controller
+                    control={form.control}
+                    name="accounts.excludeRecentDegradeAccountsFromScheduling"
+                    render={({ field }) => (
+                      <div className="flex h-9 items-center">
+                        <Switch
+                          id="accounts-exclude-recent-degrade"
+                          checked={Boolean(field.value)}
+                          onCheckedChange={field.onChange}
+                        />
+                      </div>
+                    )}
+                  />
+                </SettingsField>
               </div>
             </SettingsSection>
 

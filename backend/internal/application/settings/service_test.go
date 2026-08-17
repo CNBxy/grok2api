@@ -803,6 +803,21 @@ func TestLoadPersistedKeepsDefaultBuildForbiddenCodesForOlderPayload(t *testing.
 	}
 }
 
+func TestLoadPersistedKeepsDefaultDegradeExclusionForOlderPayload(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Accounts.ExcludeRecentDegradeAccountsFromScheduling = true
+	value := toDomainConfig(cfg)
+	value.Accounts.ExcludeRecentDegradeAccountsFromScheduling = nil
+	repository := &runtimeSettingsRepositoryStub{value: value, found: true}
+	loaded, _, _, err := LoadPersisted(context.Background(), cfg, repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.Accounts.ExcludeRecentDegradeAccountsFromScheduling {
+		t.Fatal("older runtime settings must keep the default degrade-exclusion switch")
+	}
+}
+
 func TestUpdateRejectsInvalidBuildForbiddenCodes(t *testing.T) {
 	for _, codes := range [][]string{{}, {"contains spaces"}, func() []string {
 		values := make([]string, 33)

@@ -11,6 +11,7 @@ import (
 	accountdomain "github.com/chenyme/grok2api/backend/internal/domain/account"
 	auditdomain "github.com/chenyme/grok2api/backend/internal/domain/audit"
 	"github.com/chenyme/grok2api/backend/internal/infra/persistence/relational"
+	"github.com/chenyme/grok2api/backend/internal/repository"
 )
 
 func TestDegradeSummaryClassifiesStreamingAnomalies(t *testing.T) {
@@ -214,5 +215,39 @@ func TestDegradeSummaryRejectsUnknownWindow(t *testing.T) {
 	service := NewService(relational.NewAuditRepository(database), slog.Default(), 8, 4, time.Second)
 	if _, err := service.DegradeSummary(ctx, "3h", DegradeThresholds{}, DegradeAccountFilter{}); err != ErrInvalidPeriod {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestListDegradeAccountIDsMatchesSummaryClassification(t *testing.T) {
+	ctx := context.Background()
+	database, err := relational.OpenSQLite(ctx, filepath.Join(t.TempDir(), "degrade-ids.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.InitializeSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	repo := relational.NewAuditRepository(database)
+	now := time.Now().UTC()
+	first := int64(100)
+	hot := uint64(7)
+	ok := uint64(8)
+	records := []auditdomain.Record{
+		{RequestID: "hard-1", ClientKeyID: 1, ModelRouteID: 1, Provider: "grok_build", AccountID: &hot, AccountName: "hot", StatusCode: 200, Streaming: true, OutputTokens: 2000, FirstTokenMS: &first, DurationMS: 1100, CreatedAt: now.Add(-time.Hour)},
+		{RequestID: "healthy", ClientKeyID: 1, ModelRouteID: 1, Provider: "grok_build", AccountID: &ok, StatusCode: 200, Streaming: true, OutputTokens: 100, FirstTokenMS: &first, DurationMS: 1100, CreatedAt: now.Add(-time.Hour)},
+		{RequestID: "quality_skip_me", ClientKeyID: 1, ModelRouteID: 1, Provider: "grok_build", AccountID: &hot, StatusCode: 200, Streaming: true, OutputTokens: 2000, FirstTokenMS: &first, DurationMS: 1100, CreatedAt: now.Add(-time.Hour)},
+	}
+	if err := repo.CreateBatch(ctx, records); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := repo.ListDegradeAccountIDs(ctx, repository.DegradeAccountIDQuery{
+		Start: now.Add(-24 * time.Hour), End: now, SoftTPS: 500, HardTPS: 1000, MinGenerationMS: 1000, MinOutputTokens: 32,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 || ids[0] != 7 {
+		t.Fatalf("ids = %#v", ids)
 	}
 }

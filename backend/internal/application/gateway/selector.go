@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/chenyme/grok2api/backend/internal/domain/account"
@@ -280,6 +281,10 @@ type Selector struct {
 	capacityWait           time.Duration
 	preferFreeBuild        bool
 	excludeBuildBotFlagged bool
+	excludeRecentDegrade   bool
+	degradeThresholds      degradeExclusionThresholds
+	degradeSource          atomic.Value
+	degradeExclusion       atomic.Pointer[degradeExclusionSnapshot]
 	segmentedConfig        segmentedSelectorConfig
 	segmentedState         segmentedSelectorState
 	configMu               sync.RWMutex
@@ -479,6 +484,9 @@ func (s *Selector) acquire(ctx context.Context, provider account.Provider, model
 			continue
 		}
 		if excluded[value.ID] || value.AuthStatus != account.AuthStatusActive {
+			continue
+		}
+		if s.shouldSkipDegradedCandidate(provider, value.ID, value.EgressNodeID) {
 			continue
 		}
 		consideredCandidates++
@@ -781,6 +789,9 @@ func (s *Selector) acquirePinned(ctx context.Context, provider account.Provider,
 			return nil, &SelectionUnavailableError{Reason: SelectionNoAccounts}
 		}
 		if !value.Enabled || value.AuthStatus != account.AuthStatusActive {
+			return nil, &SelectionUnavailableError{Reason: SelectionNoAccounts}
+		}
+		if s.shouldSkipDegradedCandidate(provider, value.ID, value.EgressNodeID) {
 			return nil, &SelectionUnavailableError{Reason: SelectionNoAccounts}
 		}
 		if inference {

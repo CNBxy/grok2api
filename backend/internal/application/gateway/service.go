@@ -443,11 +443,34 @@ func (s *Service) SetLogger(logger *slog.Logger) {
 	}
 }
 
+func (s *Service) SetDegradeExclusionSource(
+	listAccountIDs func(context.Context, repository.DegradeAccountIDQuery) ([]uint64, error),
+	listDisabledNodes func(context.Context) ([]uint64, error),
+) {
+	s.selector.SetDegradeExclusionSource(listAccountIDs, listDisabledNodes)
+}
+
+func (s *Service) UpdateExcludeRecentDegradeAccounts(enabled bool) {
+	s.selector.UpdateExcludeRecentDegradeAccounts(enabled)
+}
+
+func (s *Service) UpdateDegradeExclusionThresholds(softTPS, hardTPS float64, minGenMS, minOut int64, failClosed bool, window time.Duration) {
+	s.selector.UpdateDegradeExclusionThresholds(degradeExclusionThresholds{
+		SoftTPS: softTPS, HardTPS: hardTPS, MinGenerationMS: minGenMS, MinOutputTokens: minOut, FailClosed: failClosed, Window: window,
+	})
+}
+
+func (s *Service) RefreshDegradeExclusion(ctx context.Context) error {
+	return s.selector.RefreshDegradeExclusion(ctx)
+}
+
 func (s *Service) UpdateMaxAttempts(maxAttempts int) { s.maxAttempts.Store(int64(maxAttempts)) }
 
 // UpdateVideoMaxAttempts configures create-phase account failover for video jobs.
 // 0 is treated as the general default pool size for legacy configs.
-func (s *Service) UpdateVideoMaxAttempts(maxAttempts int) { s.videoMaxAttempts.Store(int64(maxAttempts)) }
+func (s *Service) UpdateVideoMaxAttempts(maxAttempts int) {
+	s.videoMaxAttempts.Store(int64(maxAttempts))
+}
 
 // UpdateMarkBuildChatDeniedAsReauth 热更新 Build chat 永久拒绝是否标 reauthRequired。
 // 默认 false：仅模型级冷却；true 时按旧逻辑将账号标为失效并出池。

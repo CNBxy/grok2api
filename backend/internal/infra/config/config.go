@@ -211,10 +211,10 @@ type LocalMediaConfig struct {
 }
 
 type RoutingConfig struct {
-	StickyTTL       Duration `yaml:"stickyTTL"`
-	CooldownBase    Duration `yaml:"cooldownBase"`
-	CooldownMax     Duration `yaml:"cooldownMax"`
-	CapacityWait    Duration `yaml:"capacityWait"`
+	StickyTTL        Duration `yaml:"stickyTTL"`
+	CooldownBase     Duration `yaml:"cooldownBase"`
+	CooldownMax      Duration `yaml:"cooldownMax"`
+	CapacityWait     Duration `yaml:"capacityWait"`
 	MaxAttempts      int      `yaml:"maxAttempts"`
 	VideoMaxAttempts int      `yaml:"videoMaxAttempts"`
 	PreferFreeBuild  bool     `yaml:"preferFreeBuild"`
@@ -281,10 +281,16 @@ type AccountsConfig struct {
 	// ExcludeBuildBotFlaggedFromScheduling removes Build accounts with bot_flag_source/bfs in {1,2}
 	// from scheduling only. Linked Web/Console accounts are unaffected.
 	ExcludeBuildBotFlaggedFromScheduling bool
-	AutoCleanReauthEnabled               bool
-	AutoCleanReauthInterval              Duration
-	AutoCleanReauthMinAge                Duration
-	AutoCleanIncludeDisabled             bool
+	// ExcludeRecentDegradeAccountsFromScheduling skips Build accounts that the
+	// 7-day degrade panel would list, and skips any account bound to a disabled
+	// egress node. Accounts stay in the pool; only scheduling is affected.
+	ExcludeRecentDegradeAccountsFromScheduling bool
+	// DegradeExclusionWindow is the lookback used when collecting degrade account IDs.
+	DegradeExclusionWindow   Duration
+	AutoCleanReauthEnabled   bool
+	AutoCleanReauthInterval  Duration
+	AutoCleanReauthMinAge    Duration
+	AutoCleanIncludeDisabled bool
 }
 
 type Secrets struct {
@@ -660,6 +666,12 @@ func (c Config) Validate() error {
 	if c.Accounts.AutoCleanReauthMinAge.Value() < time.Minute || c.Accounts.AutoCleanReauthMinAge.Value() > 30*24*time.Hour {
 		return errors.New("accounts.autoCleanReauthMinAge 必须在 1 分钟到 30 天之间")
 	}
+	if c.Accounts.DegradeExclusionWindow.Value() <= 0 {
+		c.Accounts.DegradeExclusionWindow = Duration(7 * 24 * time.Hour)
+	}
+	if c.Accounts.DegradeExclusionWindow.Value() < time.Hour || c.Accounts.DegradeExclusionWindow.Value() > 30*24*time.Hour {
+		return errors.New("accounts.degradeExclusionWindow 必须在 1 小时到 30 天之间")
+	}
 	if len(c.Accounts.BuildForbiddenReauthCodes) > 32 {
 		return errors.New("accounts.buildForbiddenReauthCodes 最多支持 32 个错误码")
 	}
@@ -853,13 +865,15 @@ func defaultConfig() Config {
 		},
 		ClientKeyDefaults: ClientKeyDefaultsConfig{RPMLimit: clientkeydomain.DefaultRPMLimit, MaxConcurrent: clientkeydomain.DefaultMaxConcurrent},
 		Accounts: AccountsConfig{
-			MarkBuildForbiddenReauth:             false,
-			BuildForbiddenReauthCodes:            []string{"permission-denied"},
-			ExcludeBuildBotFlaggedFromScheduling: false,
-			AutoCleanReauthEnabled:               false,
-			AutoCleanReauthInterval:              Duration(10 * time.Minute),
-			AutoCleanReauthMinAge:                Duration(time.Hour),
-			AutoCleanIncludeDisabled:             false,
+			MarkBuildForbiddenReauth:                   false,
+			BuildForbiddenReauthCodes:                  []string{"permission-denied"},
+			ExcludeBuildBotFlaggedFromScheduling:       false,
+			ExcludeRecentDegradeAccountsFromScheduling: true,
+			DegradeExclusionWindow:                     Duration(7 * 24 * time.Hour),
+			AutoCleanReauthEnabled:                     false,
+			AutoCleanReauthInterval:                    Duration(10 * time.Minute),
+			AutoCleanReauthMinAge:                      Duration(time.Hour),
+			AutoCleanIncludeDisabled:                   false,
 		},
 	}
 }

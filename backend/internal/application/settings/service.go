@@ -137,16 +137,20 @@ type AccountsConfig struct {
 	BuildForbiddenReauthCodes []string
 	// ExcludeBuildBotFlaggedFromScheduling drops bot-risk Build accounts from scheduling only.
 	ExcludeBuildBotFlaggedFromScheduling bool
-	AutoCleanReauthEnabled               bool
-	AutoCleanReauthInterval              string
-	AutoCleanReauthMinAge                string
-	AutoCleanIncludeDisabled             bool
+	// ExcludeRecentDegradeAccountsFromScheduling skips 7-day degrade accounts and disabled-node pools.
+	ExcludeRecentDegradeAccountsFromScheduling bool
+	AutoCleanReauthEnabled                     bool
+	AutoCleanReauthInterval                    string
+	AutoCleanReauthMinAge                      string
+	AutoCleanIncludeDisabled                   bool
 	// MarkBuildForbiddenReauthProvided preserves the value when an older management client omits the field.
 	MarkBuildForbiddenReauthProvided bool
 	// BuildForbiddenReauthCodesProvided preserves the configured codes when an older management client omits the field.
 	BuildForbiddenReauthCodesProvided bool
 	// ExcludeBuildBotFlaggedFromSchedulingProvided preserves the value when an older management client omits the field.
 	ExcludeBuildBotFlaggedFromSchedulingProvided bool
+	// ExcludeRecentDegradeAccountsFromSchedulingProvided preserves the value when an older management client omits the field.
+	ExcludeRecentDegradeAccountsFromSchedulingProvided bool
 }
 
 // EditableConfig 聚合管理端允许修改的运行参数。
@@ -426,6 +430,9 @@ func applyDomainConfig(base config.Config, value settingsdomain.Config) config.C
 		base.Accounts.BuildForbiddenReauthCodes = append([]string(nil), value.Accounts.BuildForbiddenReauthCodes...)
 	}
 	base.Accounts.ExcludeBuildBotFlaggedFromScheduling = value.Accounts.ExcludeBuildBotFlaggedFromScheduling
+	if value.Accounts.ExcludeRecentDegradeAccountsFromScheduling != nil {
+		base.Accounts.ExcludeRecentDegradeAccountsFromScheduling = *value.Accounts.ExcludeRecentDegradeAccountsFromScheduling
+	}
 	return base
 }
 
@@ -487,13 +494,14 @@ func toDomainConfig(value config.Config) settingsdomain.Config {
 			RPMLimit: value.ClientKeyDefaults.RPMLimit, MaxConcurrent: value.ClientKeyDefaults.MaxConcurrent,
 		},
 		Accounts: settingsdomain.AccountsConfig{
-			MarkBuildForbiddenReauth:             value.Accounts.MarkBuildForbiddenReauth,
-			BuildForbiddenReauthCodes:            append([]string(nil), value.Accounts.BuildForbiddenReauthCodes...),
-			ExcludeBuildBotFlaggedFromScheduling: value.Accounts.ExcludeBuildBotFlaggedFromScheduling,
-			AutoCleanReauthEnabled:               value.Accounts.AutoCleanReauthEnabled,
-			AutoCleanReauthInterval:              value.Accounts.AutoCleanReauthInterval.Value(),
-			AutoCleanReauthMinAge:                value.Accounts.AutoCleanReauthMinAge.Value(),
-			AutoCleanIncludeDisabled:             value.Accounts.AutoCleanIncludeDisabled,
+			MarkBuildForbiddenReauth:                   value.Accounts.MarkBuildForbiddenReauth,
+			BuildForbiddenReauthCodes:                  append([]string(nil), value.Accounts.BuildForbiddenReauthCodes...),
+			ExcludeBuildBotFlaggedFromScheduling:       value.Accounts.ExcludeBuildBotFlaggedFromScheduling,
+			ExcludeRecentDegradeAccountsFromScheduling: boolPtr(value.Accounts.ExcludeRecentDegradeAccountsFromScheduling),
+			AutoCleanReauthEnabled:                     value.Accounts.AutoCleanReauthEnabled,
+			AutoCleanReauthInterval:                    value.Accounts.AutoCleanReauthInterval.Value(),
+			AutoCleanReauthMinAge:                      value.Accounts.AutoCleanReauthMinAge.Value(),
+			AutoCleanIncludeDisabled:                   value.Accounts.AutoCleanIncludeDisabled,
 		},
 	}
 }
@@ -585,6 +593,9 @@ func mergeEditable(current config.Config, input EditableConfig) (config.Config, 
 		}
 		if input.Accounts.ExcludeBuildBotFlaggedFromSchedulingProvided {
 			next.Accounts.ExcludeBuildBotFlaggedFromScheduling = input.Accounts.ExcludeBuildBotFlaggedFromScheduling
+		}
+		if input.Accounts.ExcludeRecentDegradeAccountsFromSchedulingProvided {
+			next.Accounts.ExcludeRecentDegradeAccountsFromScheduling = input.Accounts.ExcludeRecentDegradeAccountsFromScheduling
 		}
 		next.Accounts.AutoCleanReauthEnabled = input.Accounts.AutoCleanReauthEnabled
 		next.Accounts.AutoCleanIncludeDisabled = input.Accounts.AutoCleanIncludeDisabled
@@ -714,16 +725,18 @@ func toEditable(cfg config.Config) EditableConfig {
 		},
 		ClientKeyDefaults: ClientKeyDefaultsConfig{RPMLimit: cfg.ClientKeyDefaults.RPMLimit, MaxConcurrent: cfg.ClientKeyDefaults.MaxConcurrent},
 		Accounts: AccountsConfig{
-			MarkBuildForbiddenReauth:                     cfg.Accounts.MarkBuildForbiddenReauth,
-			BuildForbiddenReauthCodes:                    append([]string(nil), cfg.Accounts.BuildForbiddenReauthCodes...),
-			ExcludeBuildBotFlaggedFromScheduling:         cfg.Accounts.ExcludeBuildBotFlaggedFromScheduling,
-			MarkBuildForbiddenReauthProvided:             true,
-			BuildForbiddenReauthCodesProvided:            true,
-			ExcludeBuildBotFlaggedFromSchedulingProvided: true,
-			AutoCleanReauthEnabled:                       cfg.Accounts.AutoCleanReauthEnabled,
-			AutoCleanReauthInterval:                      cfg.Accounts.AutoCleanReauthInterval.String(),
-			AutoCleanReauthMinAge:                        cfg.Accounts.AutoCleanReauthMinAge.String(),
-			AutoCleanIncludeDisabled:                     cfg.Accounts.AutoCleanIncludeDisabled,
+			MarkBuildForbiddenReauth:                           cfg.Accounts.MarkBuildForbiddenReauth,
+			BuildForbiddenReauthCodes:                          append([]string(nil), cfg.Accounts.BuildForbiddenReauthCodes...),
+			ExcludeBuildBotFlaggedFromScheduling:               cfg.Accounts.ExcludeBuildBotFlaggedFromScheduling,
+			ExcludeRecentDegradeAccountsFromScheduling:         cfg.Accounts.ExcludeRecentDegradeAccountsFromScheduling,
+			MarkBuildForbiddenReauthProvided:                   true,
+			BuildForbiddenReauthCodesProvided:                  true,
+			ExcludeBuildBotFlaggedFromSchedulingProvided:       true,
+			ExcludeRecentDegradeAccountsFromSchedulingProvided: true,
+			AutoCleanReauthEnabled:                             cfg.Accounts.AutoCleanReauthEnabled,
+			AutoCleanReauthInterval:                            cfg.Accounts.AutoCleanReauthInterval.String(),
+			AutoCleanReauthMinAge:                              cfg.Accounts.AutoCleanReauthMinAge.String(),
+			AutoCleanIncludeDisabled:                           cfg.Accounts.AutoCleanIncludeDisabled,
 		},
 		AccountsProvided: true,
 	}
@@ -744,4 +757,8 @@ func normalizeForbiddenCodes(values []string) []string {
 		result = append(result, code)
 	}
 	return result
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }

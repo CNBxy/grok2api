@@ -17,6 +17,7 @@ type AuditRepository interface {
 	Summarize(ctx context.Context, query AuditSummaryQuery) (audit.Summary, error)
 	SumTokensByAccountsSince(ctx context.Context, accountIDs []uint64, since time.Time) (map[uint64]int64, error)
 	SummarizeDegrade(ctx context.Context, query DegradeSummaryQuery) (DegradeSummaryResult, error)
+	ListDegradeAccountIDs(ctx context.Context, query DegradeAccountIDQuery) ([]uint64, error)
 }
 
 type DegradeSummaryQuery struct {
@@ -106,4 +107,16 @@ type DegradeEvent struct {
 	Class          string
 	CreatedAt      time.Time
 	Model          string
+}
+
+// DegradeAccountIDQuery is the hot-path subset of degrade classification.
+// It only returns distinct account IDs and skips dashboard aggregations.
+type DegradeAccountIDQuery struct {
+	Start           time.Time
+	End             time.Time
+	SoftTPS         float64
+	HardTPS         float64
+	MinGenerationMS int64
+	MinOutputTokens int64
+	FailClosed      bool
 }

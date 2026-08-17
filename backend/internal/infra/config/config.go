@@ -218,6 +218,9 @@ type RoutingConfig struct {
 	MaxAttempts      int      `yaml:"maxAttempts"`
 	VideoMaxAttempts int      `yaml:"videoMaxAttempts"`
 	PreferFreeBuild  bool     `yaml:"preferFreeBuild"`
+	// PreferResidentialEgress ranks accounts bound to residential egress
+	// nodes ahead of datacenter nodes after quota eligibility.
+	PreferResidentialEgress bool `yaml:"preferResidentialEgress"`
 	// MarkBuildChatDeniedAsReauth 为 true 时，Build chat 权限拒绝标 reauthRequired，默认 false。
 	MarkBuildChatDeniedAsReauth bool     `yaml:"markBuildChatDeniedAsReauth"`
 	AccountIsolatedConnections  bool     `yaml:"accountIsolatedConnections"`
@@ -842,6 +845,7 @@ func defaultConfig() Config {
 			VideoMaxAttempts:            999,
 			MarkBuildChatDeniedAsReauth: false,
 			PreferFreeBuild:             false,
+			PreferResidentialEgress:     true,
 			AccountIsolatedConnections:  false,
 			SegmentedSelectorEnabled:    true,
 			SegmentedMinCandidates:      3000,

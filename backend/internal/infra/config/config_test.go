@@ -237,6 +237,13 @@ func TestDefaultConfigEnablesDegradeExclusion(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigEnablesResidentialPreference(t *testing.T) {
+	value := defaultConfig()
+	if !value.Routing.PreferResidentialEgress {
+		t.Fatal("residential preference should default on")
+	}
+}
+
 func TestBuildResponseHeaderTimeoutIsRuntimeOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(path, []byte("provider:\n  build:\n    responseHeaderTimeout: 10m\n"), 0o600); err != nil {

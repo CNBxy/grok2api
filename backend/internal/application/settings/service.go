@@ -101,9 +101,12 @@ type RoutingConfig struct {
 	MaxAttempts                         int
 	VideoMaxAttempts                    int
 	PreferFreeBuild                     bool
+	PreferResidentialEgress             bool
 	MarkBuildChatDeniedAsReauth         bool
 	MarkBuildChatDeniedAsReauthProvided bool
-	AccountIsolatedConnections          bool
+	// PreferResidentialEgressProvided preserves the value when an older management client omits the field.
+	PreferResidentialEgressProvided bool
+	AccountIsolatedConnections      bool
 	// AccountIsolatedConnectionsProvided preserves the current value when an
 	// older management client omits the newly added field.
 	AccountIsolatedConnectionsProvided bool
@@ -383,8 +386,12 @@ func applyDomainConfig(base config.Config, value settingsdomain.Config) config.C
 	segmentedMinCandidates := base.Routing.SegmentedMinCandidates
 	segmentedWindowSize := base.Routing.SegmentedWindowSize
 	accountIsolatedConnections := base.Routing.AccountIsolatedConnections
+	preferResidentialEgress := base.Routing.PreferResidentialEgress
 	if value.Routing.AccountIsolatedConnections != nil {
 		accountIsolatedConnections = *value.Routing.AccountIsolatedConnections
+	}
+	if value.Routing.PreferResidentialEgress != nil {
+		preferResidentialEgress = *value.Routing.PreferResidentialEgress
 	}
 	if value.Routing.SegmentedSelector != nil {
 		segmentedEnabled = value.Routing.SegmentedSelector.ActiveEnabled
@@ -396,6 +403,7 @@ func applyDomainConfig(base config.Config, value settingsdomain.Config) config.C
 		CooldownMax: config.Duration(value.Routing.CooldownMax), CapacityWait: config.Duration(capacityWait), MaxAttempts: value.Routing.MaxAttempts, VideoMaxAttempts: value.Routing.VideoMaxAttempts,
 		MarkBuildChatDeniedAsReauth: value.Routing.MarkBuildChatDeniedAsReauth,
 		PreferFreeBuild:             value.Routing.PreferFreeBuild,
+		PreferResidentialEgress:     preferResidentialEgress,
 		AccountIsolatedConnections:  accountIsolatedConnections,
 		SegmentedSelectorEnabled:    segmentedEnabled,
 		SegmentedMinCandidates:      segmentedMinCandidates,
@@ -481,6 +489,7 @@ func toDomainConfig(value config.Config) settingsdomain.Config {
 			CooldownMax: value.Routing.CooldownMax.Value(), CapacityWait: value.Routing.CapacityWait.Value(), MaxAttempts: value.Routing.MaxAttempts, VideoMaxAttempts: value.Routing.VideoMaxAttempts,
 			MarkBuildChatDeniedAsReauth: value.Routing.MarkBuildChatDeniedAsReauth,
 			PreferFreeBuild:             value.Routing.PreferFreeBuild,
+			PreferResidentialEgress:     boolPtr(value.Routing.PreferResidentialEgress),
 			AccountIsolatedConnections:  &accountIsolatedConnections,
 			SegmentedSelector: &settingsdomain.SegmentedSelectorConfig{
 				ActiveEnabled: value.Routing.SegmentedSelectorEnabled,
@@ -566,6 +575,9 @@ func mergeEditable(current config.Config, input EditableConfig) (config.Config, 
 	next.Routing.MaxAttempts = input.Routing.MaxAttempts
 	next.Routing.VideoMaxAttempts = input.Routing.VideoMaxAttempts
 	next.Routing.PreferFreeBuild = input.Routing.PreferFreeBuild
+	if input.Routing.PreferResidentialEgressProvided {
+		next.Routing.PreferResidentialEgress = input.Routing.PreferResidentialEgress
+	}
 	if input.Routing.AccountIsolatedConnectionsProvided {
 		next.Routing.AccountIsolatedConnections = input.Routing.AccountIsolatedConnections
 	}
@@ -712,6 +724,8 @@ func toEditable(cfg config.Config) EditableConfig {
 			MarkBuildChatDeniedAsReauth:         cfg.Routing.MarkBuildChatDeniedAsReauth,
 			MarkBuildChatDeniedAsReauthProvided: true,
 			PreferFreeBuild:                     cfg.Routing.PreferFreeBuild,
+			PreferResidentialEgress:             cfg.Routing.PreferResidentialEgress,
+			PreferResidentialEgressProvided:     true,
 			AccountIsolatedConnections:          cfg.Routing.AccountIsolatedConnections,
 			AccountIsolatedConnectionsProvided:  true,
 			SegmentedSelector: SegmentedSelectorConfig{

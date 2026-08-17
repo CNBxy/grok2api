@@ -19,7 +19,7 @@ import { Table, TableActionCell, TableActionHead, TableBody, TableCell, TableHea
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { EgressAutomation, EgressSources } from "@/features/settings/egress-operations";
-import { cleanupUnhealthyEgressNodes, createEgressNode, deleteEgressNode, deleteEgressNodes, importEgressText, listEgressNodes, previewUnhealthyEgressNodes, refreshEgressClearance, testEgressNode, updateEgressNode, updateEgressNodesEnabled, type ClearanceMode, type EgressIPProbeDTO, type EgressNodeDTO, type EgressNodeInput, type EgressScope } from "@/features/settings/settings-api";
+import { cleanupUnhealthyEgressNodes, createEgressNode, deleteEgressNode, deleteEgressNodes, importEgressText, listEgressNodes, previewUnhealthyEgressNodes, refreshEgressClearance, testEgressNode, updateEgressNode, updateEgressNodesEnabled, type ClearanceMode, type EgressIPProbeDTO, type EgressNetworkKind, type EgressNodeDTO, type EgressNodeInput, type EgressScope } from "@/features/settings/settings-api";
 import { ErrorState, TableLoadingRow } from "@/shared/components/data-state";
 import { DataTableShell } from "@/shared/components/data-table-shell";
 import { DataTableFilters } from "@/shared/components/data-table-filters";
@@ -30,7 +30,7 @@ import { useDebouncedValue } from "@/shared/hooks/use-debounced-value";
 import { cn } from "@/shared/lib/cn";
 import { nextTableSort, type SortOrder, type TableSort } from "@/shared/lib/table-sort";
 
-const emptyInput: EgressNodeInput = { name: "", scope: "grok_build", enabled: true, proxyPool: false, accountCapacity: 0, proxyURL: "", userAgent: "", cloudflareCookies: "" };
+const emptyInput: EgressNodeInput = { name: "", scope: "grok_build", networkKind: "datacenter", enabled: true, proxyPool: false, accountCapacity: 0, proxyURL: "", userAgent: "", cloudflareCookies: "" };
 type ImportForm = { name: string; scope: EgressScope; accountCapacity: number; content: string };
 const emptyImport: ImportForm = { name: "", scope: "grok_build", accountCapacity: 0, content: "" };
 
@@ -46,6 +46,7 @@ export function EgressNodes({ title, clearanceMode }: { title: string; clearance
   const [sort, setSort] = useState<TableSort>({ field: "", order: "asc" });
   const [search, setSearch] = useState("");
   const [scopeFilter, setScopeFilter] = useState("");
+  const [networkKindFilter, setNetworkKindFilter] = useState("");
   const [enabledFilter, setEnabledFilter] = useState("");
   const [probeFilter, setProbeFilter] = useState("");
   const [assignmentFilter, setAssignmentFilter] = useState("");
@@ -54,9 +55,9 @@ export function EgressNodes({ title, clearanceMode }: { title: string; clearance
   const [cleanupOpen, setCleanupOpen] = useState(false);
   const debouncedSearch = useDebouncedValue(search);
   const query = useQuery({
-    queryKey: ["egress-nodes", "page", page, pageSize, debouncedSearch, scopeFilter, enabledFilter, probeFilter, assignmentFilter, sort.field, sort.order],
+    queryKey: ["egress-nodes", "page", page, pageSize, debouncedSearch, scopeFilter, networkKindFilter, enabledFilter, probeFilter, assignmentFilter, sort.field, sort.order],
     queryFn: () => listEgressNodes({
-      page, pageSize, search: debouncedSearch, scope: scopeFilter as EgressScope | "", enabled: enabledFilter,
+      page, pageSize, search: debouncedSearch, scope: scopeFilter as EgressScope | "", networkKind: networkKindFilter as EgressNetworkKind | "", enabled: enabledFilter,
       probe: probeFilter, assignment: assignmentFilter, sortBy: sort.field || undefined, sortOrder: sort.field ? sort.order : undefined,
     }),
     refetchInterval: 2_000,
@@ -157,7 +158,7 @@ export function EgressNodes({ title, clearanceMode }: { title: string; clearance
   }
 
   function openEdit(node: EgressNodeDTO) {
-    setForm({ name: node.name, scope: node.scope, enabled: node.enabled, proxyPool: node.proxyPool, accountCapacity: node.accountCapacity, userAgent: node.scope === "grok_build" ? "" : node.userAgent, proxyURL: "", cloudflareCookies: "" });
+    setForm({ name: node.name, scope: node.scope, networkKind: node.networkKind ?? "datacenter", enabled: node.enabled, proxyPool: node.proxyPool, accountCapacity: node.accountCapacity, userAgent: node.scope === "grok_build" ? "" : node.userAgent, proxyURL: "", cloudflareCookies: "" });
     setEditing(node);
   }
 
@@ -178,6 +179,12 @@ export function EgressNodes({ title, clearanceMode }: { title: string; clearance
     if (scope === "grok_web_asset") return t("settings.egress.scopeWebAsset");
     if (scope === "grok_console_asset") return t("settings.egress.scopeConsoleAsset");
     return t("settings.egress.scopeWeb");
+  }
+
+  function networkKindLabel(kind: EgressNetworkKind) {
+    if (kind === "residential") return t("settings.egress.networkResidential");
+    if (kind === "mobile") return t("settings.egress.networkMobile");
+    return t("settings.egress.networkDatacenter");
   }
 
   function changeSort(field: string, initialOrder: SortOrder): void {
@@ -212,7 +219,7 @@ export function EgressNodes({ title, clearanceMode }: { title: string; clearance
   const selectedAssignedAccounts = selectedNodes.reduce((total, node) => total + node.assignedAccountCount, 0);
   const selectedSourceNodes = selectedNodes.filter((node) => node.sourceId).length;
   const batchPending = removeMany.isPending || updateManyEnabled.isPending;
-  const hasActiveFilters = Boolean(debouncedSearch || scopeFilter || enabledFilter || probeFilter || assignmentFilter);
+  const hasActiveFilters = Boolean(debouncedSearch || scopeFilter || networkKindFilter || enabledFilter || probeFilter || assignmentFilter);
 
   return (
     <div className="space-y-8">
@@ -237,6 +244,11 @@ export function EgressNodes({ title, clearanceMode }: { title: string; clearance
                     { value: "grok_console", label: scopeLabel("grok_console") },
                     { value: "grok_web_asset", label: scopeLabel("grok_web_asset") },
                     { value: "grok_console_asset", label: scopeLabel("grok_console_asset") },
+                  ] },
+                  { id: "networkKind", label: t("settings.egress.networkKind"), value: networkKindFilter, onChange: (value) => { setNetworkKindFilter(value); setPage(1); setSelected(new Map()); }, options: [
+                    { value: "datacenter", label: t("settings.egress.networkDatacenter") },
+                    { value: "residential", label: t("settings.egress.networkResidential") },
+                    { value: "mobile", label: t("settings.egress.networkMobile") },
                   ] },
                   { id: "enabled", label: t("settings.egress.enabled"), value: enabledFilter, onChange: (value) => { setEnabledFilter(value); setPage(1); setSelected(new Map()); }, options: [
                     { value: "enabled", label: t("common.enable") },
@@ -276,11 +288,11 @@ export function EgressNodes({ title, clearanceMode }: { title: string; clearance
           footer={query.data && query.data.total > 0 ? <Pagination page={query.data.page} pageSize={query.data.pageSize} total={query.data.total} onPageChange={setPage} onPageSizeChange={(value) => { setPageSize(value); setPage(1); }} /> : undefined}
         >
           {query.isError ? <ErrorState message={query.error.message} onRetry={() => void query.refetch()} /> : null}
-          {!query.isError ? <Table viewportRows={10} rowHeight={48} className="min-w-[800px] table-fixed">
-          <TableHeader><TableRow className="hover:bg-transparent"><TableHead className="w-10 px-2"><Checkbox checked={allPageSelected ? true : selectedOnPage.length > 0 ? "indeterminate" : false} disabled={nodes.length === 0} onCheckedChange={(checked) => togglePage(checked === true)} aria-label={t("common.selectPage")} /></TableHead><SortableTableHead className="w-18" field="name" sortBy={sort.field} sortOrder={sort.order} onSort={changeSort}>{t("settings.egress.name")}</SortableTableHead><SortableTableHead className="w-24" field="scope" sortBy={sort.field} sortOrder={sort.order} align="center" onSort={changeSort}>{t("settings.egress.scope")}</SortableTableHead><SortableTableHead className="w-16" field="proxy" sortBy={sort.field} sortOrder={sort.order} align="center" onSort={changeSort}>{t("settings.egress.proxy")}</SortableTableHead><SortableTableHead className="w-28" field="clearance" sortBy={sort.field} sortOrder={sort.order} align="center" onSort={changeSort}>{t("settings.egress.clearance")}</SortableTableHead><TableHead className="w-14 text-center">{t("settings.egress.accounts")}</TableHead><SortableTableHead className="w-24" field="health" sortBy={sort.field} sortOrder={sort.order} initialOrder="desc" align="center" title={t("settings.egress.healthHelp")} onSort={changeSort}>{t("settings.egress.health")}</SortableTableHead><TableHead className="w-52"><div className="flex items-center justify-center gap-1"><span>{t("settings.egress.probe")}</span><Tooltip><TooltipTrigger asChild><button type="button" className="text-muted-foreground transition-colors hover:text-foreground" aria-label={t("settings.egress.probeHelp")}><CircleHelp className="size-3.5" /></button></TooltipTrigger><TooltipContent className="max-w-80">{t("settings.egress.probeHelp")}</TooltipContent></Tooltip></div></TableHead><TableActionHead /></TableRow></TableHeader>
-          {query.isPending ? <TableBody><TableLoadingRow colSpan={9} /></TableBody> : null}
-          {!query.isPending && nodes.length === 0 ? <TableBody><TableRow><TableCell colSpan={9} className="h-24 text-center text-xs text-muted-foreground">{hasActiveFilters ? t("settings.egress.noMatches") : t("settings.egress.directFallback")}</TableCell></TableRow></TableBody> : null}
-          {!query.isPending && nodes.length > 0 ? <VirtualTableBody items={nodes} colSpan={9} rowHeight={48} renderRow={(node) => (
+          {!query.isError ? <Table viewportRows={10} rowHeight={48} className="min-w-[880px] table-fixed">
+          <TableHeader><TableRow className="hover:bg-transparent"><TableHead className="w-10 px-2"><Checkbox checked={allPageSelected ? true : selectedOnPage.length > 0 ? "indeterminate" : false} disabled={nodes.length === 0} onCheckedChange={(checked) => togglePage(checked === true)} aria-label={t("common.selectPage")} /></TableHead><SortableTableHead className="w-18" field="name" sortBy={sort.field} sortOrder={sort.order} onSort={changeSort}>{t("settings.egress.name")}</SortableTableHead><SortableTableHead className="w-24" field="scope" sortBy={sort.field} sortOrder={sort.order} align="center" onSort={changeSort}>{t("settings.egress.scope")}</SortableTableHead><SortableTableHead className="w-16" field="networkKind" sortBy={sort.field} sortOrder={sort.order} align="center" onSort={changeSort}>{t("settings.egress.networkKind")}</SortableTableHead><SortableTableHead className="w-16" field="proxy" sortBy={sort.field} sortOrder={sort.order} align="center" onSort={changeSort}>{t("settings.egress.proxy")}</SortableTableHead><SortableTableHead className="w-28" field="clearance" sortBy={sort.field} sortOrder={sort.order} align="center" onSort={changeSort}>{t("settings.egress.clearance")}</SortableTableHead><TableHead className="w-14 text-center">{t("settings.egress.accounts")}</TableHead><SortableTableHead className="w-24" field="health" sortBy={sort.field} sortOrder={sort.order} initialOrder="desc" align="center" title={t("settings.egress.healthHelp")} onSort={changeSort}>{t("settings.egress.health")}</SortableTableHead><TableHead className="w-52"><div className="flex items-center justify-center gap-1"><span>{t("settings.egress.probe")}</span><Tooltip><TooltipTrigger asChild><button type="button" className="text-muted-foreground transition-colors hover:text-foreground" aria-label={t("settings.egress.probeHelp")}><CircleHelp className="size-3.5" /></button></TooltipTrigger><TooltipContent className="max-w-80">{t("settings.egress.probeHelp")}</TooltipContent></Tooltip></div></TableHead><TableActionHead /></TableRow></TableHeader>
+          {query.isPending ? <TableBody><TableLoadingRow colSpan={10} /></TableBody> : null}
+          {!query.isPending && nodes.length === 0 ? <TableBody><TableRow><TableCell colSpan={10} className="h-24 text-center text-xs text-muted-foreground">{hasActiveFilters ? t("settings.egress.noMatches") : t("settings.egress.directFallback")}</TableCell></TableRow></TableBody> : null}
+          {!query.isPending && nodes.length > 0 ? <VirtualTableBody items={nodes} colSpan={10} rowHeight={48} renderRow={(node) => (
               <TableRow className="group h-12" key={node.id} data-state={selected.has(node.id) ? "selected" : undefined}>
                 <TableCell className="px-2"><Checkbox checked={selected.has(node.id)} onCheckedChange={(checked) => toggleNode(node, checked === true)} aria-label={t("common.selectItem", { name: node.name })} /></TableCell>
                 <TableCell>
@@ -291,6 +303,7 @@ export function EgressNodes({ title, clearanceMode }: { title: string; clearance
                   </div>
                 </TableCell>
                 <TableCell className="text-center"><Badge variant="secondary" className="text-[10px]">{scopeLabel(node.scope)}</Badge></TableCell>
+                <TableCell className="text-center"><Badge variant="secondary" className="text-[10px]">{networkKindLabel(node.networkKind ?? "datacenter")}</Badge></TableCell>
                 <TableCell className="text-center"><Badge variant={node.proxyConfigured ? "secondary" : "outline"} className={cn("text-[10px]", node.proxyConfigured ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "text-muted-foreground")}>{node.proxyConfigured ? t("settings.egress.configured") : t("settings.egress.direct")}</Badge></TableCell>
                 <TableCell className="text-center"><ClearanceBadge node={node} clearanceMode={clearanceMode} /></TableCell>
                 <TableCell className="text-center text-xs tabular-nums"><span className="font-medium">{node.assignedAccountCount}</span>{node.accountCapacity > 0 ? <span className="text-muted-foreground"> / {node.accountCapacity}</span> : null}</TableCell>
@@ -394,6 +407,16 @@ export function EgressNodes({ title, clearanceMode }: { title: string; clearance
                   <SelectItem value="grok_console">{t("console.name")}</SelectItem>
                   <SelectItem value="grok_web_asset">{t("settings.egress.scopeWebAsset")}</SelectItem>
                   <SelectItem value="grok_console_asset">{t("settings.egress.scopeConsoleAsset")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label={t("settings.egress.networkKind")} controlId="egress-network-kind" help={t("settings.egress.networkKindHelp")}>
+              <Select value={form.networkKind} onValueChange={(value) => setForm({ ...form, networkKind: value as EgressNetworkKind })}>
+                <SelectTrigger id="egress-network-kind"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="datacenter">{t("settings.egress.networkDatacenter")}</SelectItem>
+                  <SelectItem value="residential">{t("settings.egress.networkResidential")}</SelectItem>
+                  <SelectItem value="mobile">{t("settings.egress.networkMobile")}</SelectItem>
                 </SelectContent>
               </Select>
             </Field>

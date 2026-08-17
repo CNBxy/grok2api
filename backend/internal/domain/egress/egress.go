@@ -1,6 +1,10 @@
 package egress
 
-import "time"
+import (
+	"strings"
+	"time"
+	"unicode"
+)
 
 type Mode string
 
@@ -22,10 +26,48 @@ const (
 	ScopeConsoleAsset Scope = "grok_console_asset"
 )
 
+type NetworkKind string
+
+const (
+	NetworkKindDatacenter  NetworkKind = "datacenter"
+	NetworkKindResidential NetworkKind = "residential"
+	NetworkKindMobile      NetworkKind = "mobile"
+)
+
+func (value NetworkKind) IsValid() bool {
+	switch value.Normalized() {
+	case NetworkKindDatacenter, NetworkKindResidential, NetworkKindMobile:
+		return true
+	default:
+		return false
+	}
+}
+
+func (value NetworkKind) Normalized() NetworkKind {
+	switch strings.ToLower(strings.TrimSpace(string(value))) {
+	case string(NetworkKindDatacenter), "dc", "机房":
+		return NetworkKindDatacenter
+	case string(NetworkKindResidential), "resi", "住宅":
+		return NetworkKindResidential
+	case string(NetworkKindMobile), "cell", "移动":
+		return NetworkKindMobile
+	default:
+		return NetworkKind(strings.ToLower(strings.TrimSpace(string(value))))
+	}
+}
+
+func NormalizeNetworkKind(value NetworkKind) NetworkKind {
+	if value.IsValid() {
+		return value.Normalized()
+	}
+	return NetworkKindDatacenter
+}
+
 type Node struct {
 	ID                          uint64
 	Name                        string
 	Scope                       Scope
+	NetworkKind                 NetworkKind
 	Enabled                     bool
 	ProxyPool                   bool
 	SourceID                    uint64
@@ -58,6 +100,7 @@ type PublicNode struct {
 	ID                   uint64
 	Name                 string
 	Scope                Scope
+	NetworkKind          NetworkKind
 	Enabled              bool
 	ProxyConfigured      bool
 	ProxyPool            bool
@@ -266,4 +309,36 @@ func SupportsScope(nodeScope, requestScope Scope) bool {
 	default:
 		return false
 	}
+}
+
+// IsResidentialName reports whether an egress node name historically marked a
+// residential proxy. Used only to backfill NetworkKind for existing nodes.
+func IsResidentialName(name string) bool {
+	return InferNetworkKind(name) == NetworkKindResidential
+}
+
+func InferNetworkKind(name string) NetworkKind {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return NetworkKindDatacenter
+	}
+	if strings.Contains(trimmed, "住宅") {
+		return NetworkKindResidential
+	}
+	if strings.Contains(trimmed, "移动") {
+		return NetworkKindMobile
+	}
+	normalized := strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) || r == '-' || r == '_' {
+			return -1
+		}
+		return unicode.ToLower(r)
+	}, trimmed)
+	if strings.Contains(normalized, "residential") {
+		return NetworkKindResidential
+	}
+	if strings.Contains(normalized, "mobile") {
+		return NetworkKindMobile
+	}
+	return NetworkKindDatacenter
 }

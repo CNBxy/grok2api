@@ -267,7 +267,7 @@ func (s *Service) ImportText(ctx context.Context, input ImportInput) (ImportResu
 			return ImportResult{}, encryptErr
 		}
 		nodes = append(nodes, domain.Node{
-			Name: sourceNodeName(input.Name, index), Scope: input.Scope, Enabled: true,
+			Name: sourceNodeName(input.Name, index), Scope: input.Scope, NetworkKind: domain.InferNetworkKind(sourceNodeName(input.Name, index)), Enabled: true,
 			AccountCapacity: input.AccountCapacity, EncryptedProxyURL: encryptedProxy, Health: 1,
 			ProbeStatus: domain.ProbeStatusUnknown,
 		})

@@ -35,6 +35,7 @@ type EgressNodeUnhealthyCleaner interface {
 
 type EgressNodeListFilter struct {
 	Scope       egress.Scope
+	NetworkKind egress.NetworkKind
 	Enabled     *bool
 	ProbeStatus egress.ProbeStatus
 	Assignment  string

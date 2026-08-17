@@ -495,6 +495,7 @@ type egressNodeModel struct {
 	ID                          uint64  `gorm:"primaryKey;autoIncrement"`
 	Name                        string  `gorm:"size:160;not null;check:chk_egress_nodes_name,length(trim(name)) BETWEEN 1 AND 160"`
 	Scope                       string  `gorm:"size:32;not null;check:chk_egress_nodes_specific_scope,scope IN ('grok_build','grok_web','grok_console','grok_web_asset','grok_console_asset')"`
+	NetworkKind                 string  `gorm:"size:16;not null;default:datacenter;index:idx_egress_nodes_network_kind;check:chk_egress_nodes_network_kind,network_kind IN ('datacenter','residential','mobile')"`
 	Enabled                     bool    `gorm:"not null;default:true"`
 	ProxyPool                   bool    `gorm:"not null;default:false"`
 	SourceID                    *uint64 `gorm:"uniqueIndex:uidx_egress_nodes_source_key,priority:1;index:idx_egress_nodes_source;constraint:OnUpdate:CASCADE,OnDelete:SET NULL"`
@@ -557,16 +558,16 @@ type egressOperationsConfigModel struct {
 func (egressOperationsConfigModel) TableName() string { return "egress_operations_config" }
 
 type accountOperationLogModel struct {
-	ID          uint64 `gorm:"primaryKey;autoIncrement"`
-	AccountID   uint64 `gorm:"not null;index:idx_account_operation_logs_account_op_finished,priority:1;check:chk_account_operation_logs_account_id,account_id > 0"`
-	Provider    string `gorm:"size:32;not null;check:chk_account_operation_logs_provider,provider IN ('grok_build','grok_web','grok_console')"`
-	OpType      string `gorm:"size:32;not null;index:idx_account_operation_logs_account_op_finished,priority:2;check:chk_account_operation_logs_op_type,op_type IN ('quota_sync','credential_refresh')"`
-	Success     bool   `gorm:"not null"`
-	StatusCode  int    `gorm:"not null;default:0;check:chk_account_operation_logs_status_code,status_code >= 0"`
-	ErrorCode   string `gorm:"size:100;not null;default:'';check:chk_account_operation_logs_error_code,length(error_code) <= 100"`
-	Message     string `gorm:"size:1024;not null;default:'';check:chk_account_operation_logs_message,length(message) <= 1024"`
-	RawResponse string `gorm:"type:text;not null;default:'';check:chk_account_operation_logs_raw_response,length(raw_response) <= 4096"`
-	TriggeredBy string `gorm:"size:16;not null;check:chk_account_operation_logs_triggered_by,triggered_by IN ('manual','batch','scheduler')"`
+	ID          uint64        `gorm:"primaryKey;autoIncrement"`
+	AccountID   uint64        `gorm:"not null;index:idx_account_operation_logs_account_op_finished,priority:1;check:chk_account_operation_logs_account_id,account_id > 0"`
+	Provider    string        `gorm:"size:32;not null;check:chk_account_operation_logs_provider,provider IN ('grok_build','grok_web','grok_console')"`
+	OpType      string        `gorm:"size:32;not null;index:idx_account_operation_logs_account_op_finished,priority:2;check:chk_account_operation_logs_op_type,op_type IN ('quota_sync','credential_refresh')"`
+	Success     bool          `gorm:"not null"`
+	StatusCode  int           `gorm:"not null;default:0;check:chk_account_operation_logs_status_code,status_code >= 0"`
+	ErrorCode   string        `gorm:"size:100;not null;default:'';check:chk_account_operation_logs_error_code,length(error_code) <= 100"`
+	Message     string        `gorm:"size:1024;not null;default:'';check:chk_account_operation_logs_message,length(message) <= 1024"`
+	RawResponse string        `gorm:"type:text;not null;default:'';check:chk_account_operation_logs_raw_response,length(raw_response) <= 4096"`
+	TriggeredBy string        `gorm:"size:16;not null;check:chk_account_operation_logs_triggered_by,triggered_by IN ('manual','batch','scheduler')"`
 	StartedAt   time.Time     `gorm:"not null"`
 	FinishedAt  time.Time     `gorm:"not null;index:idx_account_operation_logs_account_op_finished,priority:3"`
 	CreatedAt   time.Time     `gorm:"not null"`

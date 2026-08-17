@@ -37,7 +37,7 @@ func TestSegmentedCandidateCohortsRetainOnlyBoundedRotatingWindows(t *testing.T)
 			ID: uint64(index + 1), Provider: account.ProviderBuild, Priority: account.DefaultPriority,
 		}}
 	}
-	buckets := segmentedCandidateCohorts(values, nil, time.Now().UTC(), nil, false, 9980, 64, segmentedWindowsBeforeFullFallback)
+	buckets := segmentedCandidateCohorts(values, nil, time.Now().UTC(), nil, false, false, nil, 9980, 64, segmentedWindowsBeforeFullFallback)
 	if len(buckets) != 1 || len(buckets[0].indexes) != 256 {
 		t.Fatalf("bounded cohorts = %#v", buckets)
 	}
@@ -207,15 +207,17 @@ func TestSegmentedActiveCohortOrderingMatchesFullPlannerHardOrder(t *testing.T) 
 			for _, quotaKnown := range []bool{false, true} {
 				for _, quotaAvailable := range []bool{false, true} {
 					for _, preferFreeBuild := range []bool{false, true} {
-						for _, tier := range []int{0, 2} {
-							for _, priority := range []int{1, 10} {
-								for _, billingFresh := range []bool{false, true} {
-									cohorts = append(cohorts, segmentedSelectorCohort{
-										supportsModel: supportsModel, capabilityKnown: capabilityKnown,
-										quotaKnown: quotaKnown, quotaAvailable: quotaAvailable,
-										preferFreeBuild: preferFreeBuild, tier: tier, priority: priority,
-										billingFresh: billingFresh,
-									})
+						for _, preferResidential := range []bool{false, true} {
+							for _, tier := range []int{0, 2} {
+								for _, priority := range []int{1, 10} {
+									for _, billingFresh := range []bool{false, true} {
+										cohorts = append(cohorts, segmentedSelectorCohort{
+											supportsModel: supportsModel, capabilityKnown: capabilityKnown,
+											quotaKnown: quotaKnown, quotaAvailable: quotaAvailable,
+											preferResidential: preferResidential, preferFreeBuild: preferFreeBuild, tier: tier, priority: priority,
+											billingFresh: billingFresh,
+										})
+									}
 								}
 							}
 						}
@@ -234,8 +236,8 @@ func TestSegmentedActiveCohortOrderingMatchesFullPlannerHardOrder(t *testing.T) 
 				{Credential: account.Credential{ID: 2, Priority: right.priority}, SupportsModel: right.supportsModel, ModelCapabilityKnown: right.capabilityKnown},
 			}
 			scores := []candidateScore{
-				{index: 0, tier: left.tier, quotaKnown: left.quotaKnown, quotaAvailable: left.quotaAvailable, preferFreeBuild: left.preferFreeBuild, billingFresh: left.billingFresh},
-				{index: 1, tier: right.tier, quotaKnown: right.quotaKnown, quotaAvailable: right.quotaAvailable, preferFreeBuild: right.preferFreeBuild, billingFresh: right.billingFresh},
+				{index: 0, tier: left.tier, quotaKnown: left.quotaKnown, quotaAvailable: left.quotaAvailable, preferResidential: left.preferResidential, preferFreeBuild: left.preferFreeBuild, billingFresh: left.billingFresh},
+				{index: 1, tier: right.tier, quotaKnown: right.quotaKnown, quotaAvailable: right.quotaAvailable, preferResidential: right.preferResidential, preferFreeBuild: right.preferFreeBuild, billingFresh: right.billingFresh},
 			}
 			if got, want := segmentedSelectorCohortBetter(left, right), candidateScoreBetter(values, scores[0], scores[1]); got != want {
 				t.Fatalf("cohort order mismatch at %d/%d: got %t want %t", leftIndex, rightIndex, got, want)
@@ -258,7 +260,7 @@ func TestSegmentedPlannerUsesOnePreferFreeBuildSnapshot(t *testing.T) {
 	}
 	selector := NewSelector(nil, memory.NewConcurrencyLimiter(), nil, nil, time.Hour, time.Second, time.Minute)
 	selector.UpdatePreferFreeBuild(true)
-	plan, err := selector.planCandidateIndexesWithHints(context.Background(), values, nil, now, nil, nil, false)
+	plan, err := selector.planCandidateIndexesWithHints(context.Background(), values, nil, now, nil, nil, false, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +270,7 @@ func TestSegmentedPlannerUsesOnePreferFreeBuildSnapshot(t *testing.T) {
 	}
 
 	selector.UpdatePreferFreeBuild(false)
-	plan, err = selector.planCandidateIndexesWithHints(context.Background(), values, nil, now, nil, nil, true)
+	plan, err = selector.planCandidateIndexesWithHints(context.Background(), values, nil, now, nil, nil, true, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

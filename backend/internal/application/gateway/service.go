@@ -464,6 +464,18 @@ func (s *Service) RefreshDegradeExclusion(ctx context.Context) error {
 	return s.selector.RefreshDegradeExclusion(ctx)
 }
 
+func (s *Service) SetResidentialNodeSource(listIDs func(context.Context) ([]uint64, error)) {
+	s.selector.SetResidentialNodeSource(listIDs)
+}
+
+func (s *Service) UpdatePreferResidentialEgress(enabled bool) {
+	s.selector.UpdatePreferResidentialEgress(enabled)
+}
+
+func (s *Service) RefreshResidentialNodes(ctx context.Context) error {
+	return s.selector.RefreshResidentialNodes(ctx)
+}
+
 func (s *Service) UpdateMaxAttempts(maxAttempts int) { s.maxAttempts.Store(int64(maxAttempts)) }
 
 // UpdateVideoMaxAttempts configures create-phase account failover for video jobs.

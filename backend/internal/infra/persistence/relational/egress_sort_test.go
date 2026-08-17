@@ -130,6 +130,24 @@ func TestEgressRepositoryPaginatesAndFiltersManagementList(t *testing.T) {
 	if err != nil || total != 1 || len(values) != 1 || values[0].Name != "beta" {
 		t.Fatalf("disabled unbound page = %#v, total=%d, err=%v", values, total, err)
 	}
+
+	values, total, err = repo.ListEgressNodePage(ctx, repository.EgressNodeListQuery{
+		Page:   repository.PageQuery{Limit: 20},
+		Filter: repository.EgressNodeListFilter{NetworkKind: egress.NetworkKindResidential},
+	})
+	if err != nil || total != 0 {
+		t.Fatalf("empty residential filter = %#v, total=%d, err=%v", values, total, err)
+	}
+	if _, err := repo.CreateEgressNode(ctx, egress.Node{Name: "home", Scope: egress.ScopeBuild, NetworkKind: egress.NetworkKindResidential, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	values, total, err = repo.ListEgressNodePage(ctx, repository.EgressNodeListQuery{
+		Page:   repository.PageQuery{Limit: 20, Sort: repository.SortQuery{Field: "networkKind", Direction: repository.SortAscending}},
+		Filter: repository.EgressNodeListFilter{NetworkKind: egress.NetworkKindResidential},
+	})
+	if err != nil || total != 1 || len(values) != 1 || values[0].Name != "home" || values[0].NetworkKind != egress.NetworkKindResidential {
+		t.Fatalf("residential filter = %#v, total=%d, err=%v", values, total, err)
+	}
 }
 
 func TestEgressStateUpdatesDoNotOverwriteClearanceOrHealth(t *testing.T) {

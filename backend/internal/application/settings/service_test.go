@@ -818,6 +818,21 @@ func TestLoadPersistedKeepsDefaultDegradeExclusionForOlderPayload(t *testing.T) 
 	}
 }
 
+func TestLoadPersistedKeepsDefaultResidentialPreferenceForOlderPayload(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Routing.PreferResidentialEgress = true
+	value := toDomainConfig(cfg)
+	value.Routing.PreferResidentialEgress = nil
+	repository := &runtimeSettingsRepositoryStub{value: value, found: true}
+	loaded, _, _, err := LoadPersisted(context.Background(), cfg, repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.Routing.PreferResidentialEgress {
+		t.Fatal("older runtime settings must keep the default residential preference")
+	}
+}
+
 func TestUpdateRejectsInvalidBuildForbiddenCodes(t *testing.T) {
 	for _, codes := range [][]string{{}, {"contains spaces"}, func() []string {
 		values := make([]string, 33)

@@ -20,7 +20,7 @@ export type SettingsConfigDTO = {
   };
   frontend: { publicApiBaseURL: string };
   routing: {
-    stickyTTL: string; cooldownBase: string; cooldownMax: string; capacityWait: string; maxAttempts: number; videoMaxAttempts: number; preferFreeBuild: boolean; markBuildChatDeniedAsReauth: boolean;
+    stickyTTL: string; cooldownBase: string; cooldownMax: string; capacityWait: string; maxAttempts: number; videoMaxAttempts: number; preferFreeBuild: boolean; preferResidentialEgress: boolean; markBuildChatDeniedAsReauth: boolean;
     accountIsolatedConnections: boolean;
     segmentedSelector: { enabled: boolean; minCandidates: number; windowSize: number };
   };
@@ -40,8 +40,10 @@ export type SettingsConfigDTO = {
 
 export type ClearanceMode = "manual" | "flaresolverr" | "on_demand";
 
+export type EgressNetworkKind = "datacenter" | "residential" | "mobile";
+
 export type EgressNodeDTO = {
-	id: string; name: string; scope: EgressScope; enabled: boolean;
+	id: string; name: string; scope: EgressScope; networkKind: EgressNetworkKind; enabled: boolean;
 	proxyConfigured: boolean; userAgent: string; cookieConfigured: boolean;
 	accountBoundProxy: boolean; proxyPool: boolean;
 	sourceId?: string; accountCapacity: number; assignedAccountCount: number;
@@ -52,7 +54,7 @@ export type EgressNodeDTO = {
 };
 
 export type EgressNodeInput = {
-	name: string; scope: EgressScope; enabled: boolean; proxyPool: boolean; proxyURL?: string;
+	name: string; scope: EgressScope; networkKind: EgressNetworkKind; enabled: boolean; proxyPool: boolean; proxyURL?: string;
 	accountCapacity: number; clearProxyURL?: boolean; userAgent: string; cloudflareCookies?: string; clearCookies?: boolean;
 };
 
@@ -115,7 +117,7 @@ const settingsConfigValidator = hasShape({
   media: hasShape({ maxImageBytes: isNumber, maxTotalBytes: isNumber, cleanupThresholdPercent: isNumber, cleanupInterval: isString }),
   frontend: hasShape({ publicApiBaseURL: isString }),
   routing: hasShape({
-    stickyTTL: isString, cooldownBase: isString, cooldownMax: isString, capacityWait: isString, maxAttempts: isNumber, videoMaxAttempts: isNumber, preferFreeBuild: isBoolean, markBuildChatDeniedAsReauth: isBoolean,
+    stickyTTL: isString, cooldownBase: isString, cooldownMax: isString, capacityWait: isString, maxAttempts: isNumber, videoMaxAttempts: isNumber, preferFreeBuild: isBoolean, preferResidentialEgress: isOptional(isBoolean), markBuildChatDeniedAsReauth: isBoolean,
     accountIsolatedConnections: isOptional(isBoolean),
     segmentedSelector: isOptional(hasShape({ enabled: isBoolean, minCandidates: isNumber, windowSize: isNumber })),
   }),
@@ -165,6 +167,7 @@ function withSettingsDefaults(snapshot: SettingsSnapshotDTO): SettingsSnapshotDT
       routing: {
         ...snapshot.config.routing,
         markBuildChatDeniedAsReauth: snapshot.config.routing.markBuildChatDeniedAsReauth ?? false,
+        preferResidentialEgress: snapshot.config.routing.preferResidentialEgress ?? true,
         accountIsolatedConnections: snapshot.config.routing.accountIsolatedConnections ?? false,
         segmentedSelector: {
           enabled: segmentedSelector.enabled ?? true,
@@ -196,7 +199,7 @@ const decodeSettingsSnapshot = (value: unknown) => withSettingsDefaults(decodeSe
 const egressIPProbeValidator = hasShape({
   status: isOneOf("unknown", "healthy", "unhealthy"), testedAt: isOptional(isString), latencyMs: isNumber, exitIp: isOptional(isString), error: isOptional(isString),
 });
-type EgressNodeWireDTO = Omit<EgressNodeDTO, "ipv4Probe" | "ipv6Probe"> & { ipv4Probe?: EgressIPProbeDTO; ipv6Probe?: EgressIPProbeDTO };
+type EgressNodeWireDTO = Omit<EgressNodeDTO, "ipv4Probe" | "ipv6Probe" | "networkKind"> & { ipv4Probe?: EgressIPProbeDTO; ipv6Probe?: EgressIPProbeDTO; networkKind?: EgressNetworkKind };
 type EgressSourceWireDTO = Omit<EgressSourceDTO, "proxyConfigured"> & { proxyConfigured?: boolean };
 type EgressOperationsConfigWireDTO = Omit<EgressOperationsConfigDTO, "probeProvider"> & {
   probeProvider?: "ipinfo" | "cloudflare";
@@ -205,6 +208,7 @@ type EgressProbeResultWireDTO = Omit<EgressProbeResultDTO, "ipv4" | "ipv6"> & { 
 const unknownEgressIPProbe = (): EgressIPProbeDTO => ({ status: "unknown", latencyMs: 0 });
 const withEgressNodeProbeDefaults = (value: EgressNodeWireDTO): EgressNodeDTO => ({
   ...value,
+  networkKind: value.networkKind ?? "datacenter",
   ipv4Probe: value.ipv4Probe ?? unknownEgressIPProbe(),
   ipv6Probe: value.ipv6Probe ?? unknownEgressIPProbe(),
 });
@@ -213,7 +217,7 @@ const withEgressSourceDefaults = (value: EgressSourceWireDTO): EgressSourceDTO =
   proxyConfigured: value.proxyConfigured ?? false,
 });
 const egressNodeValidator = hasShape({
-  id: isString, name: isString, scope: isOneOf("grok_build", "grok_web", "grok_console", "grok_web_asset", "grok_console_asset"), enabled: isBoolean,
+  id: isString, name: isString, scope: isOneOf("grok_build", "grok_web", "grok_console", "grok_web_asset", "grok_console_asset"), networkKind: isOptional(isOneOf("datacenter", "residential", "mobile")), enabled: isBoolean,
   proxyConfigured: isBoolean, userAgent: isString, cookieConfigured: isBoolean, accountBoundProxy: isBoolean, proxyPool: isBoolean, health: isNumber, failureCount: isNumber,
   sourceId: isOptional(isString), accountCapacity: isNumber, assignedAccountCount: isNumber,
   probeStatus: isOneOf("unknown", "healthy", "unhealthy"), lastProbedAt: isOptional(isString), probeLatencyMs: isNumber, exitIp: isOptional(isString), probeError: isOptional(isString), probeProvider: isOptional(isOneOf("ipinfo", "cloudflare")),
@@ -221,7 +225,7 @@ const egressNodeValidator = hasShape({
   cooldownUntil: isOptional(isString), lastError: isOptional(isString),
 });
 const decodeEgressNodeRaw = createObjectDecoder<EgressNodeWireDTO>("egress node", {
-  id: isString, name: isString, scope: isOneOf("grok_build", "grok_web", "grok_console", "grok_web_asset", "grok_console_asset"), enabled: isBoolean,
+  id: isString, name: isString, scope: isOneOf("grok_build", "grok_web", "grok_console", "grok_web_asset", "grok_console_asset"), networkKind: isOptional(isOneOf("datacenter", "residential", "mobile")), enabled: isBoolean,
   proxyConfigured: isBoolean, userAgent: isString, cookieConfigured: isBoolean, accountBoundProxy: isBoolean, proxyPool: isBoolean, health: isNumber, failureCount: isNumber,
   sourceId: isOptional(isString), accountCapacity: isNumber, assignedAccountCount: isNumber,
   probeStatus: isOneOf("unknown", "healthy", "unhealthy"), lastProbedAt: isOptional(isString), probeLatencyMs: isNumber, exitIp: isOptional(isString), probeError: isOptional(isString), probeProvider: isOptional(isOneOf("ipinfo", "cloudflare")),
@@ -323,6 +327,7 @@ type ListEgressNodesInput = {
   pageSize?: number;
   search?: string;
   scope?: EgressScope | "";
+  networkKind?: EgressNetworkKind | "";
   enabled?: string;
   probe?: string;
   assignment?: string;
@@ -334,6 +339,7 @@ export function listEgressNodes(input: ListEgressNodesInput = {}): Promise<Egres
   const query = new URLSearchParams({ page: String(input.page ?? 1), pageSize: String(input.pageSize ?? 20) });
   if (input.search) query.set("search", input.search);
   if (input.scope) query.set("scope", input.scope);
+  if (input.networkKind) query.set("networkKind", input.networkKind);
   if (input.enabled) query.set("enabled", input.enabled);
   if (input.probe) query.set("probe", input.probe);
   if (input.assignment) query.set("assignment", input.assignment);

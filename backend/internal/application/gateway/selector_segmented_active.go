@@ -57,6 +57,8 @@ func (s *Selector) acquireSegmentedCandidates(ctx context.Context, values []acco
 	candidatesScanned := 0
 	fullPlannerOnly := false
 	preferFreeBuild := s.preferFreeBuildEnabled()
+	preferResidential := s.preferResidentialEnabled()
+	residentialNodes := s.residentialNodeSet()
 	for {
 		now := time.Now().UTC()
 		if fullPlannerOnly {
@@ -65,7 +67,7 @@ func (s *Selector) acquireSegmentedCandidates(ctx context.Context, values []acco
 				length = len(values)
 			}
 			candidatesScanned += length
-			plan, err := s.planCandidateIndexesWithHints(ctx, values, indexes, now, tierOrder, nil, preferFreeBuild)
+			plan, err := s.planCandidateIndexesWithHints(ctx, values, indexes, now, tierOrder, nil, preferFreeBuild, preferResidential, residentialNodes)
 			if err != nil {
 				observeSegmentedActive(request.provider, "error", "full_fallback", startedAt, windowsScanned, candidatesScanned)
 				return nil, err
@@ -85,7 +87,7 @@ func (s *Selector) acquireSegmentedCandidates(ctx context.Context, values []acco
 			}
 		} else {
 			concurrencyHints := make(map[int]int, min(len(indexes), request.windowSize*segmentedWindowsBeforeFullFallback))
-			cohorts := segmentedCandidateCohorts(values, indexes, now, tierOrder, preferFreeBuild, request.cursor, request.windowSize, segmentedWindowsBeforeFullFallback)
+			cohorts := segmentedCandidateCohorts(values, indexes, now, tierOrder, preferFreeBuild, preferResidential, residentialNodes, request.cursor, request.windowSize, segmentedWindowsBeforeFullFallback)
 			roundWindows := 0
 			fallbackToFull := false
 			for cohortIndex, bucket := range cohorts {
@@ -94,7 +96,7 @@ func (s *Selector) acquireSegmentedCandidates(ctx context.Context, values []acco
 					windowsScanned++
 					roundWindows++
 					candidatesScanned += len(windowIndexes)
-					plan, err := s.planCandidateIndexesWithHints(ctx, values, windowIndexes, now, tierOrder, concurrencyHints, preferFreeBuild)
+					plan, err := s.planCandidateIndexesWithHints(ctx, values, windowIndexes, now, tierOrder, concurrencyHints, preferFreeBuild, preferResidential, residentialNodes)
 					if err != nil {
 						observeSegmentedActive(request.provider, "error", "planning", startedAt, windowsScanned, candidatesScanned)
 						return nil, err
@@ -124,7 +126,7 @@ func (s *Selector) acquireSegmentedCandidates(ctx context.Context, values []acco
 					length = len(values)
 				}
 				candidatesScanned += length
-				plan, err := s.planCandidateIndexesWithHints(ctx, values, indexes, now, tierOrder, concurrencyHints, preferFreeBuild)
+				plan, err := s.planCandidateIndexesWithHints(ctx, values, indexes, now, tierOrder, concurrencyHints, preferFreeBuild, preferResidential, residentialNodes)
 				if err != nil {
 					observeSegmentedActive(request.provider, "error", "full_fallback", startedAt, windowsScanned, candidatesScanned)
 					return nil, err
@@ -187,7 +189,7 @@ func (s *Selector) claimSegmentedPlan(ctx context.Context, plan *candidatePlan, 
 	return result, nil
 }
 
-func segmentedCandidateCohorts(values []account.RoutingCandidate, indexes []int, now time.Time, tierOrder []account.WebTier, preferFreeBuild bool, cursor uint64, windowSize, maxWindows int) []segmentedSelectorCohortBucket {
+func segmentedCandidateCohorts(values []account.RoutingCandidate, indexes []int, now time.Time, tierOrder []account.WebTier, preferFreeBuild, preferResidential bool, residentialNodes map[uint64]struct{}, cursor uint64, windowSize, maxWindows int) []segmentedSelectorCohortBucket {
 	if windowSize <= 0 || maxWindows <= 0 {
 		return nil
 	}
@@ -195,8 +197,9 @@ func segmentedCandidateCohorts(values []account.RoutingCandidate, indexes []int,
 		candidate := values[index]
 		cohort := segmentedSelectorCohort{
 			supportsModel: candidate.SupportsModel, capabilityKnown: candidate.ModelCapabilityKnown,
-			preferFreeBuild: preferFreeBuild && candidate.IsKnownFreeBuild(),
-			tier:            tierOrderRank(tierOrder, candidate.Credential.WebTier), priority: candidate.Credential.Priority,
+			preferResidential: preferResidentialCandidate(preferResidential, residentialNodes, candidate.Credential.EgressNodeID),
+			preferFreeBuild:   preferFreeBuild && candidate.IsKnownFreeBuild(),
+			tier:              tierOrderRank(tierOrder, candidate.Credential.WebTier), priority: candidate.Credential.Priority,
 		}
 		if candidate.QuotaWindow != nil && candidate.QuotaWindow.Source == account.QuotaSourceUpstream {
 			cohort.quotaKnown = true

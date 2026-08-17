@@ -340,6 +340,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	selector := gateway.NewSelector(accountRepo, concurrency, sticky, providers, cfg.Routing.StickyTTL.Value(), cfg.Routing.CooldownBase.Value(), cfg.Routing.CooldownMax.Value(), cfg.Routing.CapacityWait.Value())
 	selector.SetLogger(logger)
 	selector.UpdatePreferFreeBuild(cfg.Routing.PreferFreeBuild)
+	selector.UpdatePreferResidentialEgress(cfg.Routing.PreferResidentialEgress)
 	selector.UpdateSegmentedSelector(cfg.Routing.SegmentedSelectorEnabled, cfg.Routing.SegmentedMinCandidates, cfg.Routing.SegmentedWindowSize)
 	selector.UpdateExcludeBuildBotFlaggedFromScheduling(cfg.Accounts.ExcludeBuildBotFlaggedFromScheduling)
 	accountService.UpdateExcludeBuildBotFlaggedFromScheduling(cfg.Accounts.ExcludeBuildBotFlaggedFromScheduling)
@@ -356,7 +357,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	gatewayService.UpdateMarkBuildChatDeniedAsReauth(cfg.Routing.MarkBuildChatDeniedAsReauth)
 	gatewayService.SetLogger(logger)
 	gatewayService.SetDegradeExclusionSource(auditRepo.ListDegradeAccountIDs, egressRepo.ListDisabledEgressNodeIDs)
+	gatewayService.SetResidentialNodeSource(egressRepo.ListResidentialEgressNodeIDs)
 	applyDegradeExclusion(gatewayService, cfg)
+	gatewayService.UpdatePreferResidentialEgress(cfg.Routing.PreferResidentialEgress)
 	egressService.SetQualityProber(gatewayService)
 	gatewayService.UpdateBuildForbiddenReauthPolicy(cfg.Accounts.MarkBuildForbiddenReauth, cfg.Accounts.BuildForbiddenReauthCodes)
 	gatewayService.UpdateRequestTimeout(cfg.Server.RequestTimeout.Value())
@@ -402,6 +405,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		accountSyncService.UpdateConcurrency(next.Batch.ImportConcurrency)
 		selector.UpdateConfig(next.Routing.StickyTTL.Value(), next.Routing.CooldownBase.Value(), next.Routing.CooldownMax.Value(), next.Routing.CapacityWait.Value())
 		selector.UpdatePreferFreeBuild(next.Routing.PreferFreeBuild)
+		selector.UpdatePreferResidentialEgress(next.Routing.PreferResidentialEgress)
 		selector.UpdateSegmentedSelector(next.Routing.SegmentedSelectorEnabled, next.Routing.SegmentedMinCandidates, next.Routing.SegmentedWindowSize)
 		selector.UpdateExcludeBuildBotFlaggedFromScheduling(next.Accounts.ExcludeBuildBotFlaggedFromScheduling)
 		accountService.UpdateExcludeBuildBotFlaggedFromScheduling(next.Accounts.ExcludeBuildBotFlaggedFromScheduling)
@@ -612,6 +616,18 @@ func (a *Application) Run(ctx context.Context) error {
 		a.runPeriodicTask(taskCtx, 15*time.Second, "degrade_exclusion_refresh", func(runCtx context.Context) error {
 			if err := a.gateway.RefreshDegradeExclusion(runCtx); err != nil {
 				a.logger.Warn("degrade_exclusion_refresh_failed", "error", err)
+			}
+			return nil
+		})
+		return nil
+	})
+	startBackground("residential_preference_refresh", func(taskCtx context.Context) error {
+		if err := a.gateway.RefreshResidentialNodes(taskCtx); err != nil {
+			a.logger.Warn("residential_preference_refresh_failed", "error", err)
+		}
+		a.runPeriodicTask(taskCtx, 15*time.Second, "residential_preference_refresh", func(runCtx context.Context) error {
+			if err := a.gateway.RefreshResidentialNodes(runCtx); err != nil {
+				a.logger.Warn("residential_preference_refresh_failed", "error", err)
 			}
 			return nil
 		})

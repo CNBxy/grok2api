@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	clientkeydomain "github.com/chenyme/grok2api/backend/internal/domain/clientkey"
+	"github.com/chenyme/grok2api/backend/internal/domain/egress"
 	"github.com/chenyme/grok2api/backend/internal/domain/media"
 	settingsdomain "github.com/chenyme/grok2api/backend/internal/domain/settings"
 	"gorm.io/gorm"
@@ -134,6 +135,7 @@ func (d *Database) initializeSchema(ctx context.Context) error {
 	hadTierScope := hadClientKeys && db.Migrator().HasColumn(&clientKeyModel{}, "TierScopeMask")
 	hadLegacyAccountPool := hadClientKeys && db.Migrator().HasColumn("client_keys", "account_pool")
 	hadGlobalSubscriptionProxy := db.Migrator().HasTable("egress_operations_config") && db.Migrator().HasColumn("egress_operations_config", "encrypted_subscription_proxy_url")
+	hadEgressNetworkKind := db.Migrator().HasTable(&egressNodeModel{}) && (db.Migrator().HasColumn(&egressNodeModel{}, "NetworkKind") || db.Migrator().HasColumn("egress_nodes", "network_kind"))
 	// all 作用域会让 Build 与 Web 共用 UA、健康度和冷却状态，升级时直接移除旧节点。
 	if db.Migrator().HasTable(&egressNodeModel{}) {
 		if err := db.Where("scope = ?", "all").Delete(&egressNodeModel{}).Error; err != nil {
@@ -209,6 +211,9 @@ func (d *Database) initializeSchema(ctx context.Context) error {
 	if err := d.backfillWebEgressIdentities(ctx); err != nil {
 		return fmt.Errorf("迁移 Web 出口身份: %w", err)
 	}
+	if err := d.backfillEgressNetworkKinds(ctx, !hadEgressNetworkKind); err != nil {
+		return fmt.Errorf("迁移出口网络标签: %w", err)
+	}
 	if err := d.backfillReauthMarkedAt(ctx); err != nil {
 		return fmt.Errorf("迁移 reauth_marked_at: %w", err)
 	}
@@ -228,6 +233,29 @@ func (d *Database) initializeSchema(ctx context.Context) error {
 	}
 	if err := d.ensureCanonicalModelPublicIDs(ctx); err != nil {
 		return fmt.Errorf("迁移模型 Provider 命名空间: %w", err)
+	}
+	return nil
+}
+
+func (d *Database) backfillEgressNetworkKinds(ctx context.Context, columnAdded bool) error {
+	if !columnAdded || !d.db.Migrator().HasTable(&egressNodeModel{}) {
+		return nil
+	}
+	var rows []struct {
+		ID   uint64
+		Name string
+	}
+	if err := d.db.WithContext(ctx).Model(&egressNodeModel{}).Select("id", "name").Find(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		kind := egress.InferNetworkKind(row.Name)
+		if kind == egress.NetworkKindDatacenter {
+			continue
+		}
+		if err := d.db.WithContext(ctx).Model(&egressNodeModel{}).Where("id = ?", row.ID).Update("network_kind", string(kind)).Error; err != nil {
+			return err
+		}
 	}
 	return nil
 }

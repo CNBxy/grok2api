@@ -15,13 +15,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DegradeAccountsPanel } from "@/features/quality-guard/degrade-accounts-panel";
 import { getQualityGuardStatus, runQualityTest, updateQualityGuardPolicy, type QualityGuardEvent, type QualityGuardNodeState, type QualityGuardPolicy, type QualityGuardStatistics, type QualityGuardStatus, type QualityTestResult } from "@/features/quality-guard/quality-guard-api";
-import { createEgressNode, deleteEgressNodes, listAllEgressNodes, updateEgressNode, updateEgressNodesEnabled, type EgressNodeDTO, type EgressNodeInput } from "@/features/settings/settings-api";
+import { createEgressNode, deleteEgressNodes, listAllEgressNodes, updateEgressNode, updateEgressNodesEnabled, type EgressNetworkKind, type EgressNodeDTO, type EgressNodeInput } from "@/features/settings/settings-api";
 import { ErrorState } from "@/shared/components/data-state";
 import { PageHeader } from "@/shared/components/page-header";
 import { cn } from "@/shared/lib/cn";
@@ -37,14 +38,15 @@ export function QualityGuardPage() {
   const [nodeForm, setNodeForm] = useState<EgressNodeInput>(emptyNodeInput());
   const [deletingNodes, setDeletingNodes] = useState<EgressNodeDTO[]>([]);
   const [selectedNodeIDs, setSelectedNodeIDs] = useState<Set<string>>(() => new Set());
+  const [networkKindFilter, setNetworkKindFilter] = useState<EgressNetworkKind | "">("");
   const statusQuery = useQuery({
     queryKey: ["quality-guard"],
     queryFn: getQualityGuardStatus,
     refetchInterval: 5_000,
   });
   const nodesQuery = useQuery({
-    queryKey: ["quality-guard-egress-nodes"],
-    queryFn: () => listAllEgressNodes({ scope: "grok_build" }),
+    queryKey: ["quality-guard-egress-nodes", networkKindFilter],
+    queryFn: () => listAllEgressNodes({ scope: "grok_build", networkKind: networkKindFilter }),
     refetchInterval: 15_000,
   });
   const testMutation = useMutation({
@@ -117,6 +119,7 @@ export function QualityGuardPage() {
     setNodeForm({
       name: node.name,
       scope: "grok_build",
+      networkKind: node.networkKind ?? "datacenter",
       enabled: node.enabled,
       proxyPool: node.proxyPool,
       accountCapacity: node.accountCapacity,
@@ -193,6 +196,15 @@ export function QualityGuardPage() {
                 <p className="mt-1 text-xs text-muted-foreground">{t("qualityGuard.nodesHelp")}</p>
               </div>
               <div className="flex flex-wrap items-center gap-1.5 self-start sm:self-auto sm:justify-end">
+                <Select value={networkKindFilter || "all"} onValueChange={(value) => setNetworkKindFilter(value === "all" ? "" : value as EgressNetworkKind)}>
+                  <SelectTrigger className="h-8 w-[132px] text-xs" aria-label={t("settings.egress.networkKind")}><SelectValue placeholder={t("settings.egress.networkKind")} /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{t("common.all")}</SelectItem>
+                    <SelectItem value="datacenter">{t("settings.egress.networkDatacenter")}</SelectItem>
+                    <SelectItem value="residential">{t("settings.egress.networkResidential")}</SelectItem>
+                    <SelectItem value="mobile">{t("settings.egress.networkMobile")}</SelectItem>
+                  </SelectContent>
+                </Select>
                 <span className="mr-1 hidden text-xs text-muted-foreground lg:inline">{t("qualityGuard.updatedAt", { time: formatTime(status.updatedAt, i18n.language) })}</span>
                 {selectedNodes.length > 0 ? <>
                   <span className="mr-1 text-xs text-muted-foreground">{t("common.selectedCount", { count: selectedNodes.length })}</span>
@@ -330,6 +342,16 @@ function NodeEditor({ open, editingNode, form, onFormChange, onOpenChange, onSav
         <NodeField label={t("settings.egress.scope")} controlId="quality-node-scope">
           <div id="quality-node-scope" className="flex h-9 items-center rounded-md border bg-muted/30 px-3 text-sm text-muted-foreground">{t("settings.egress.scopeBuild")}</div>
         </NodeField>
+        <NodeField label={t("settings.egress.networkKind")} controlId="quality-node-network-kind" help={t("settings.egress.networkKindHelp")}>
+          <Select value={form.networkKind} onValueChange={(value) => onFormChange({ ...form, networkKind: value as EgressNodeInput["networkKind"] })}>
+            <SelectTrigger id="quality-node-network-kind"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="datacenter">{t("settings.egress.networkDatacenter")}</SelectItem>
+              <SelectItem value="residential">{t("settings.egress.networkResidential")}</SelectItem>
+              <SelectItem value="mobile">{t("settings.egress.networkMobile")}</SelectItem>
+            </SelectContent>
+          </Select>
+        </NodeField>
         <NodeField label={t("settings.egress.capacity")} controlId="quality-node-capacity" help={t("qualityGuard.nodeCapacityHelp")}>
           <Input id="quality-node-capacity" type="number" min={0} max={100000} placeholder={t("settings.egress.unlimited")} value={form.accountCapacity || ""} onChange={(event) => onFormChange({ ...form, accountCapacity: Number(event.target.value) })} />
         </NodeField>
@@ -364,7 +386,7 @@ function NodeField({ label, controlId, help, children }: { label: string; contro
 }
 
 function emptyNodeInput(): EgressNodeInput {
-  return { name: "", scope: "grok_build", enabled: true, proxyPool: false, accountCapacity: 0, proxyURL: "", userAgent: "", cloudflareCookies: "" };
+  return { name: "", scope: "grok_build", networkKind: "datacenter", enabled: true, proxyPool: false, accountCapacity: 0, proxyURL: "", userAgent: "", cloudflareCookies: "" };
 }
 
 function StateBadge({ node, state, protectedNode }: { node: EgressNodeDTO; state?: QualityGuardNodeState; protectedNode: boolean }) {

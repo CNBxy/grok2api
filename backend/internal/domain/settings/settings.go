@@ -105,6 +105,9 @@ type RoutingConfig struct {
 	MaxAttempts      int
 	VideoMaxAttempts int
 	PreferFreeBuild  bool
+	// PreferResidentialEgress 为 true 时，绑定住宅出口的账号优先于机房出口。
+	// 指针用于区分旧快照缺失字段（沿用配置默认值）与管理端显式关闭。
+	PreferResidentialEgress *bool
 	// MarkBuildChatDeniedAsReauth 为 true 时，Build chat 权限拒绝标 reauthRequired，默认 false 保留模型级冷却。
 	MarkBuildChatDeniedAsReauth bool
 	// AccountIsolatedConnections is optional so persisted payloads written by

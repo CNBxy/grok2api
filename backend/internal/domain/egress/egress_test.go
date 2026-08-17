@@ -24,3 +24,34 @@ func TestSupportsScopePreservesPrimaryAndResourceCompatibility(t *testing.T) {
 		})
 	}
 }
+
+func TestInferNetworkKindFromName(t *testing.T) {
+	cases := map[string]NetworkKind{
+		"住宅Build":             NetworkKindResidential,
+		"Residential US":      NetworkKindResidential,
+		"移动 01":               NetworkKindMobile,
+		"us-mobile-edge":      NetworkKindMobile,
+		"mihomo:48010:香港 aws": NetworkKindDatacenter,
+		"":                    NetworkKindDatacenter,
+	}
+	for name, want := range cases {
+		if got := InferNetworkKind(name); got != want {
+			t.Fatalf("InferNetworkKind(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestNormalizeNetworkKindAliases(t *testing.T) {
+	if got := NormalizeNetworkKind("住宅"); got != NetworkKindResidential {
+		t.Fatalf("住宅 = %q", got)
+	}
+	if got := NormalizeNetworkKind("机房"); got != NetworkKindDatacenter {
+		t.Fatalf("机房 = %q", got)
+	}
+	if got := NormalizeNetworkKind("移动"); got != NetworkKindMobile {
+		t.Fatalf("移动 = %q", got)
+	}
+	if got := NormalizeNetworkKind("unknown"); got != NetworkKindDatacenter {
+		t.Fatalf("unknown = %q", got)
+	}
+}

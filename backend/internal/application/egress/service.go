@@ -76,6 +76,7 @@ const (
 type Input struct {
 	Name              string
 	Scope             domain.Scope
+	NetworkKind       domain.NetworkKind
 	Enabled           bool
 	ProxyPool         *bool
 	AccountCapacity   *int
@@ -88,6 +89,7 @@ type Input struct {
 
 type ListFilter struct {
 	Scope       domain.Scope
+	NetworkKind domain.NetworkKind
 	Enabled     string
 	ProbeStatus string
 	Assignment  string
@@ -238,12 +240,12 @@ func (s *Service) DefaultUserAgents() map[string]string {
 
 func (s *Service) List(ctx context.Context, page, pageSize int, search string, filter ListFilter) ([]domain.PublicNode, int64, error) {
 	page, pageSize = repository.NormalizePage(page, pageSize, repository.DefaultPageSize)
-	if !validListScope(filter.Scope) || !validListValue(filter.Enabled, "enabled", "disabled") ||
+	if !validListScope(filter.Scope) || !validNetworkKindFilter(filter.NetworkKind) || !validListValue(filter.Enabled, "enabled", "disabled") ||
 		!validListValue(filter.ProbeStatus, string(domain.ProbeStatusHealthy), string(domain.ProbeStatusUnhealthy), string(domain.ProbeStatusUnknown)) ||
 		!validListValue(filter.Assignment, "bound", "unbound") {
 		return nil, 0, ErrInvalidFilter
 	}
-	if !repository.IsValidSort(filter.Sort, "name", "scope", "proxy", "clearance", "health") {
+	if !repository.IsValidSort(filter.Sort, "name", "scope", "networkKind", "proxy", "clearance", "health") {
 		return nil, 0, ErrInvalidSort
 	}
 	var enabled *bool
@@ -254,7 +256,7 @@ func (s *Service) List(ctx context.Context, page, pageSize int, search string, f
 	values, total, err := s.repository.ListEgressNodePage(ctx, repository.EgressNodeListQuery{
 		Page: repository.PageQuery{Offset: (page - 1) * pageSize, Limit: pageSize, Search: strings.TrimSpace(search), Sort: filter.Sort},
 		Filter: repository.EgressNodeListFilter{
-			Scope: filter.Scope, Enabled: enabled, ProbeStatus: domain.ProbeStatus(filter.ProbeStatus), Assignment: filter.Assignment,
+			Scope: filter.Scope, NetworkKind: filter.NetworkKind, Enabled: enabled, ProbeStatus: domain.ProbeStatus(filter.ProbeStatus), Assignment: filter.Assignment,
 		},
 	})
 	if err != nil {
@@ -267,7 +269,7 @@ func (s *Service) ListAll(ctx context.Context, scope domain.Scope, sort reposito
 	if !validListScope(scope) {
 		return nil, ErrInvalidFilter
 	}
-	if !repository.IsValidSort(sort, "name", "scope", "proxy", "clearance", "health") {
+	if !repository.IsValidSort(sort, "name", "scope", "networkKind", "proxy", "clearance", "health") {
 		return nil, ErrInvalidSort
 	}
 	values, err := s.repository.ListEgressNodes(ctx, scope, sort)
@@ -287,6 +289,10 @@ func (s *Service) publicNodes(values []domain.Node) []domain.PublicNode {
 
 func validListScope(scope domain.Scope) bool {
 	return scope == "" || scope == domain.ScopeBuild || scope == domain.ScopeWeb || scope == domain.ScopeConsole || scope == domain.ScopeWebAsset || scope == domain.ScopeConsoleAsset
+}
+
+func validNetworkKindFilter(value domain.NetworkKind) bool {
+	return value == "" || value.IsValid()
 }
 
 func allServiceScopes() []domain.Scope {
@@ -722,7 +728,16 @@ func (s *Service) applyInput(value domain.Node, input Input, create bool) (domai
 	if !validListScope(input.Scope) || input.Scope == "" {
 		return domain.Node{}, fmt.Errorf("%w: scope 必须是 grok_build、grok_web、grok_console、grok_web_asset 或 grok_console_asset", ErrInvalidInput)
 	}
-	value.Name, value.Scope, value.Enabled, value.ProxyPool = name, input.Scope, input.Enabled, proxyPool
+	networkKind := domain.NormalizeNetworkKind(value.NetworkKind)
+	if input.NetworkKind != "" {
+		if !input.NetworkKind.IsValid() {
+			return domain.Node{}, fmt.Errorf("%w: 网络标签必须是 datacenter、residential 或 mobile", ErrInvalidInput)
+		}
+		networkKind = input.NetworkKind.Normalized()
+	} else if create {
+		networkKind = domain.InferNetworkKind(name)
+	}
+	value.Name, value.Scope, value.NetworkKind, value.Enabled, value.ProxyPool = name, input.Scope, networkKind, input.Enabled, proxyPool
 	if input.AccountCapacity != nil {
 		if *input.AccountCapacity < 0 || *input.AccountCapacity > 100000 {
 			return domain.Node{}, fmt.Errorf("%w: 每个代理的账号容量必须在 0 到 100000 之间", ErrInvalidInput)
@@ -812,7 +827,7 @@ func (s *Service) publicNode(value domain.Node) domain.PublicNode {
 		health, failureCount, cooldownUntil, lastError = 1, 0, nil, ""
 	}
 	return domain.PublicNode{
-		ID: value.ID, Name: value.Name, Scope: value.Scope, Enabled: value.Enabled,
+		ID: value.ID, Name: value.Name, Scope: value.Scope, NetworkKind: domain.NormalizeNetworkKind(value.NetworkKind), Enabled: value.Enabled,
 		ProxyConfigured: value.EncryptedProxyURL != "", UserAgent: userAgent, CookieConfigured: value.EncryptedCloudflareCookie != "",
 		ProxyPool:         proxyPool,
 		SourceID:          value.SourceID,

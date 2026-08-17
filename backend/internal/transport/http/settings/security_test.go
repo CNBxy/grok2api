@@ -63,6 +63,15 @@ func TestSettingsResponseIncludesPreferFreeBuild(t *testing.T) {
 	}
 }
 
+func TestSettingsResponseIncludesPreferResidentialEgress(t *testing.T) {
+	response := newSettingsResponse(settingsapp.Snapshot{Config: settingsapp.EditableConfig{
+		Routing: settingsapp.RoutingConfig{PreferResidentialEgress: true},
+	}})
+	if response.Config.Routing.PreferResidentialEgress == nil || !*response.Config.Routing.PreferResidentialEgress {
+		t.Fatal("preferResidentialEgress was lost from settings response")
+	}
+}
+
 func TestSettingsResponseIncludesMarkBuildChatDeniedAsReauth(t *testing.T) {
 	response := newSettingsResponse(settingsapp.Snapshot{Config: settingsapp.EditableConfig{
 		Routing: settingsapp.RoutingConfig{MarkBuildChatDeniedAsReauth: true},

@@ -22,6 +22,12 @@ func (r *EgressRepository) ListDisabledEgressNodeIDs(ctx context.Context) ([]uin
 	return ids, mapError(err)
 }
 
+func (r *EgressRepository) ListResidentialEgressNodeIDs(ctx context.Context) ([]uint64, error) {
+	var ids []uint64
+	err := r.db.db.WithContext(ctx).Model(&egressNodeModel{}).Where("network_kind = ?", string(egress.NetworkKindResidential)).Pluck("id", &ids).Error
+	return ids, mapError(err)
+}
+
 func (r *EgressRepository) ListEgressNodes(ctx context.Context, scope egress.Scope, sort repository.SortQuery) ([]egress.Node, error) {
 	query := r.db.db.WithContext(ctx).Model(&egressNodeModel{})
 	if scope != "" {
@@ -29,11 +35,12 @@ func (r *EgressRepository) ListEgressNodes(ctx context.Context, scope egress.Sco
 	}
 	var rows []egressNodeModel
 	query = applyStableSort(query, sort, map[string]sortSpec{
-		"name":      {expression: "LOWER(egress_nodes.name)"},
-		"scope":     {expression: "egress_nodes.scope"},
-		"proxy":     {expression: "CASE WHEN egress_nodes.encrypted_proxy_url <> '' THEN 0 ELSE 1 END"},
-		"clearance": {expression: "CASE WHEN egress_nodes.encrypted_cloudflare_cookie <> '' THEN 0 ELSE 1 END"},
-		"health":    {expression: "egress_nodes.health", defaultDirection: repository.SortDescending},
+		"name":        {expression: "LOWER(egress_nodes.name)"},
+		"scope":       {expression: "egress_nodes.scope"},
+		"networkKind": {expression: "egress_nodes.network_kind"},
+		"proxy":       {expression: "CASE WHEN egress_nodes.encrypted_proxy_url <> '' THEN 0 ELSE 1 END"},
+		"clearance":   {expression: "CASE WHEN egress_nodes.encrypted_cloudflare_cookie <> '' THEN 0 ELSE 1 END"},
+		"health":      {expression: "egress_nodes.health", defaultDirection: repository.SortDescending},
 	}, sortSpec{expression: "egress_nodes.scope"}, "egress_nodes.id")
 	if err := query.Find(&rows).Error; err != nil {
 		return nil, err
@@ -59,6 +66,9 @@ func (r *EgressRepository) ListEgressNodePage(ctx context.Context, input reposit
 	if input.Filter.Scope != "" {
 		query = query.Where("egress_nodes.scope = ?", input.Filter.Scope)
 	}
+	if input.Filter.NetworkKind != "" {
+		query = query.Where("egress_nodes.network_kind = ?", string(input.Filter.NetworkKind.Normalized()))
+	}
 	if input.Filter.Enabled != nil {
 		query = query.Where("egress_nodes.enabled = ?", *input.Filter.Enabled)
 	}
@@ -77,11 +87,12 @@ func (r *EgressRepository) ListEgressNodePage(ctx context.Context, input reposit
 		return nil, 0, err
 	}
 	query = applyStableSort(query, input.Page.Sort, map[string]sortSpec{
-		"name":      {expression: "LOWER(egress_nodes.name)"},
-		"scope":     {expression: "egress_nodes.scope"},
-		"proxy":     {expression: "CASE WHEN egress_nodes.encrypted_proxy_url <> '' THEN 0 ELSE 1 END"},
-		"clearance": {expression: "CASE WHEN egress_nodes.encrypted_cloudflare_cookie <> '' THEN 0 ELSE 1 END"},
-		"health":    {expression: "egress_nodes.health", defaultDirection: repository.SortDescending},
+		"name":        {expression: "LOWER(egress_nodes.name)"},
+		"scope":       {expression: "egress_nodes.scope"},
+		"networkKind": {expression: "egress_nodes.network_kind"},
+		"proxy":       {expression: "CASE WHEN egress_nodes.encrypted_proxy_url <> '' THEN 0 ELSE 1 END"},
+		"clearance":   {expression: "CASE WHEN egress_nodes.encrypted_cloudflare_cookie <> '' THEN 0 ELSE 1 END"},
+		"health":      {expression: "egress_nodes.health", defaultDirection: repository.SortDescending},
 	}, sortSpec{expression: "egress_nodes.scope"}, "egress_nodes.id")
 	var rows []egressNodeModel
 	if err := query.Offset(input.Page.Offset).Limit(input.Page.Limit).Find(&rows).Error; err != nil {
@@ -762,7 +773,7 @@ func (r *EgressRepository) assignedAccountCountsForNodes(ctx context.Context, no
 
 func toEgressDomain(row egressNodeModel) egress.Node {
 	return egress.Node{
-		ID: row.ID, Name: row.Name, Scope: egress.Scope(row.Scope), Enabled: row.Enabled, ProxyPool: row.ProxyPool,
+		ID: row.ID, Name: row.Name, Scope: egress.Scope(row.Scope), NetworkKind: egress.NormalizeNetworkKind(egress.NetworkKind(row.NetworkKind)), Enabled: row.Enabled, ProxyPool: row.ProxyPool,
 		SourceID: valueEgressNodeID(row.SourceID), SourceKey: row.SourceKey, AccountCapacity: row.AccountCapacity,
 		EncryptedProxyURL: row.EncryptedProxyURL, UserAgent: row.UserAgent, EncryptedCloudflareCookie: row.EncryptedCloudflareCookie,
 		ClearanceRefreshedAt: row.ClearanceRefreshedAt, ClearanceFingerprint: row.ClearanceFingerprint,
@@ -786,7 +797,7 @@ func fromEgressDomain(value egress.Node) egressNodeModel {
 		probeStatus = egress.ProbeStatusUnknown
 	}
 	return egressNodeModel{
-		ID: value.ID, Name: value.Name, Scope: string(value.Scope), Enabled: value.Enabled, ProxyPool: value.ProxyPool,
+		ID: value.ID, Name: value.Name, Scope: string(value.Scope), NetworkKind: string(egress.NormalizeNetworkKind(value.NetworkKind)), Enabled: value.Enabled, ProxyPool: value.ProxyPool,
 		SourceID: egressNodeID(value.SourceID), SourceKey: value.SourceKey, AccountCapacity: value.AccountCapacity,
 		EncryptedProxyURL: value.EncryptedProxyURL, UserAgent: value.UserAgent, EncryptedCloudflareCookie: value.EncryptedCloudflareCookie,
 		ClearanceRefreshedAt: value.ClearanceRefreshedAt, ClearanceFingerprint: value.ClearanceFingerprint,

@@ -280,11 +280,14 @@ type Selector struct {
 	cooldownMax            time.Duration
 	capacityWait           time.Duration
 	preferFreeBuild        bool
+	preferResidential      bool
 	excludeBuildBotFlagged bool
 	excludeRecentDegrade   bool
 	degradeThresholds      degradeExclusionThresholds
 	degradeSource          atomic.Value
 	degradeExclusion       atomic.Pointer[degradeExclusionSnapshot]
+	residentialSource      atomic.Value
+	residentialNodes       atomic.Pointer[residentialSnapshot]
 	segmentedConfig        segmentedSelectorConfig
 	segmentedState         segmentedSelectorState
 	configMu               sync.RWMutex

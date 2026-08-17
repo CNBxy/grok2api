@@ -417,6 +417,7 @@ func (h *Handler) refreshClearance(c *gin.Context) {
 type nodeRequest struct {
 	Name              string  `json:"name"`
 	Scope             string  `json:"scope"`
+	NetworkKind       string  `json:"networkKind"`
 	Enabled           bool    `json:"enabled"`
 	ProxyPool         *bool   `json:"proxyPool"`
 	AccountCapacity   *int    `json:"accountCapacity"`
@@ -431,6 +432,7 @@ type nodeResponse struct {
 	ID                   uint64              `json:"id,string"`
 	Name                 string              `json:"name"`
 	Scope                string              `json:"scope"`
+	NetworkKind          string              `json:"networkKind"`
 	Enabled              bool                `json:"enabled"`
 	ProxyConfigured      bool                `json:"proxyConfigured"`
 	ProxyPool            bool                `json:"proxyPool"`
@@ -606,7 +608,7 @@ func (h *Handler) unassignAccounts(c *gin.Context) {
 
 func (value nodeRequest) input() egressapp.Input {
 	return egressapp.Input{
-		Name: value.Name, Scope: egressdomain.Scope(value.Scope), Enabled: value.Enabled, ProxyPool: value.ProxyPool,
+		Name: value.Name, Scope: egressdomain.Scope(value.Scope), NetworkKind: egressdomain.NetworkKind(value.NetworkKind), Enabled: value.Enabled, ProxyPool: value.ProxyPool,
 		AccountCapacity: value.AccountCapacity,
 		ProxyURL:        value.ProxyURL, ClearProxyURL: value.ClearProxyURL, UserAgent: value.UserAgent,
 		CloudflareCookies: value.CloudflareCookies, ClearCookies: value.ClearCookies,
@@ -634,7 +636,7 @@ func (h *Handler) list(c *gin.Context) {
 	}
 	page, pageSize := nodePagination(c)
 	values, total, err := h.service.List(c.Request.Context(), page, pageSize, c.Query("search"), egressapp.ListFilter{
-		Scope: scope, Enabled: c.Query("enabled"), ProbeStatus: c.Query("probe"), Assignment: c.Query("assignment"),
+		Scope: scope, NetworkKind: egressdomain.NetworkKind(c.Query("networkKind")), Enabled: c.Query("enabled"), ProbeStatus: c.Query("probe"), Assignment: c.Query("assignment"),
 		Sort: sort,
 	})
 	if h.writeListError(c, err) {
@@ -654,7 +656,7 @@ func legacyEgressListRequest(c *gin.Context) bool {
 	if _, exists := c.GetQuery("pageSize"); exists {
 		return false
 	}
-	return c.Query("search") == "" && c.Query("enabled") == "" && c.Query("probe") == "" && c.Query("assignment") == ""
+	return c.Query("search") == "" && c.Query("enabled") == "" && c.Query("probe") == "" && c.Query("assignment") == "" && c.Query("networkKind") == ""
 }
 
 func (h *Handler) writeListError(c *gin.Context, err error) bool {
@@ -711,7 +713,7 @@ func (h *Handler) update(c *gin.Context) {
 
 func newNodeResponse(value egressdomain.PublicNode) nodeResponse {
 	return nodeResponse{
-		ID: value.ID, Name: value.Name, Scope: string(value.Scope), Enabled: value.Enabled,
+		ID: value.ID, Name: value.Name, Scope: string(value.Scope), NetworkKind: string(egressdomain.NormalizeNetworkKind(value.NetworkKind)), Enabled: value.Enabled,
 		ProxyConfigured: value.ProxyConfigured, ProxyPool: value.ProxyPool, UserAgent: value.UserAgent, CookieConfigured: value.CookieConfigured,
 		AccountBoundProxy: value.AccountBoundProxy,
 		SourceID:          value.SourceID, AccountCapacity: value.AccountCapacity,

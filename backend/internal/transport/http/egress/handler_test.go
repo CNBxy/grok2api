@@ -251,6 +251,13 @@ func TestNewNodeResponseIncludesIPv4AndIPv6ProbeDetails(t *testing.T) {
 	}
 }
 
+func TestNewNodeResponseIncludesNetworkKind(t *testing.T) {
+	response := newNodeResponse(egressdomain.PublicNode{NetworkKind: egressdomain.NetworkKindResidential})
+	if response.NetworkKind != "residential" {
+		t.Fatalf("networkKind = %q", response.NetworkKind)
+	}
+}
+
 func TestOperationsConfigRequestParsesFallbacks(t *testing.T) {
 	input, err := (operationsConfigRequest{
 		ProbeProvider: "cloudflare", ProbeIntervalSeconds: 900, AssignmentIntervalSeconds: 300,

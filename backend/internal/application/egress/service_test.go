@@ -238,3 +238,43 @@ func TestProxyPoolRequiresConfiguredProxy(t *testing.T) {
 		t.Fatalf("proxy pool without a proxy error = %v", err)
 	}
 }
+
+func TestApplyInputInfersResidentialKindOnCreate(t *testing.T) {
+	cipher, err := security.NewCipher("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(nil, cipher, "browser-agent")
+	value, err := service.applyInput(domain.Node{}, Input{Name: "住宅Build", Scope: domain.ScopeBuild, Enabled: true}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.NetworkKind != domain.NetworkKindResidential {
+		t.Fatalf("inferred kind = %q", value.NetworkKind)
+	}
+}
+
+func TestApplyInputKeepsExistingNetworkKindWhenOmitted(t *testing.T) {
+	cipher, err := security.NewCipher("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(nil, cipher, "browser-agent")
+	value, err := service.applyInput(domain.Node{
+		Name: "住宅Build", Scope: domain.ScopeBuild, NetworkKind: domain.NetworkKindResidential, Enabled: true,
+	}, Input{Name: "住宅Build", Scope: domain.ScopeBuild, Enabled: false}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.NetworkKind != domain.NetworkKindResidential || value.Enabled {
+		t.Fatalf("updated node = %#v", value)
+	}
+}
+
+func TestApplyInputRejectsUnknownNetworkKind(t *testing.T) {
+	service := &Service{}
+	_, err := service.applyInput(domain.Node{}, Input{Name: "node", Scope: domain.ScopeBuild, NetworkKind: "satellite", Enabled: true}, true)
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("unknown kind error = %v", err)
+	}
+}

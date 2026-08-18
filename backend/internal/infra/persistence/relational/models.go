@@ -556,3 +556,22 @@ type egressOperationsConfigModel struct {
 }
 
 func (egressOperationsConfigModel) TableName() string { return "egress_operations_config" }
+
+type accountOperationLogModel struct {
+	ID          uint64 `gorm:"primaryKey;autoIncrement"`
+	AccountID   uint64 `gorm:"not null;index:idx_account_operation_logs_account_op_finished,priority:1;check:chk_account_operation_logs_account_id,account_id > 0"`
+	Provider    string `gorm:"size:32;not null;check:chk_account_operation_logs_provider,provider IN ('grok_build','grok_web','grok_console')"`
+	OpType      string `gorm:"size:32;not null;index:idx_account_operation_logs_account_op_finished,priority:2;check:chk_account_operation_logs_op_type,op_type IN ('quota_sync','credential_refresh')"`
+	Success     bool   `gorm:"not null"`
+	StatusCode  int    `gorm:"not null;default:0;check:chk_account_operation_logs_status_code,status_code >= 0"`
+	ErrorCode   string `gorm:"size:100;not null;default:'';check:chk_account_operation_logs_error_code,length(error_code) <= 100"`
+	Message     string `gorm:"size:1024;not null;default:'';check:chk_account_operation_logs_message,length(message) <= 1024"`
+	RawResponse string `gorm:"type:text;not null;default:'';check:chk_account_operation_logs_raw_response,length(raw_response) <= 4096"`
+	TriggeredBy string `gorm:"size:16;not null;check:chk_account_operation_logs_triggered_by,triggered_by IN ('manual','batch','scheduler')"`
+	StartedAt   time.Time     `gorm:"not null"`
+	FinishedAt  time.Time     `gorm:"not null;index:idx_account_operation_logs_account_op_finished,priority:3"`
+	CreatedAt   time.Time     `gorm:"not null"`
+	Account     *accountModel `gorm:"foreignKey:AccountID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+}
+
+func (accountOperationLogModel) TableName() string { return "account_operation_logs" }

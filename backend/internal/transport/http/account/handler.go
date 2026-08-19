@@ -134,8 +134,10 @@ func (p *accountSyncPipeline) reportProgress() {
 func (h *Handler) Register(router *gin.RouterGroup) {
 	router.GET("/accounts", h.list)
 	router.GET("/accounts/summary", h.summary)
+	router.GET("/accounts/operation-records", h.listOperationRecords)
 	router.GET("/accounts/export", h.exportCredentials)
 	router.POST("/accounts/export", h.exportSelectedCredentials)
+	router.GET("/accounts/:id/operation-logs", h.listOperationLogs)
 	router.GET("/accounts/:id", h.get)
 	router.POST("/accounts/device/start", h.startDevice)
 	router.POST("/accounts/device/:sessionId/poll", h.pollDevice)
@@ -328,6 +330,31 @@ type accountResponse struct {
 	QuotaWindows               []quotaWindowResponse   `json:"quotaWindows,omitempty"`
 }
 
+type operationLogResponse struct {
+	ID          string     `json:"id"`
+	OpType      string     `json:"opType"`
+	Success     bool       `json:"success"`
+	StatusCode  int        `json:"statusCode"`
+	ErrorCode   string     `json:"errorCode,omitempty"`
+	Message     string     `json:"message,omitempty"`
+	RawResponse string     `json:"rawResponse,omitempty"`
+	TriggeredBy string     `json:"triggeredBy"`
+	StartedAt   time.Time  `json:"startedAt"`
+	FinishedAt  time.Time  `json:"finishedAt"`
+}
+
+type operationRecordResponse struct {
+	ID               string                `json:"id"`
+	Provider         string                `json:"provider"`
+	Name             string                `json:"name"`
+	Email            string                `json:"email,omitempty"`
+	Enabled          bool                  `json:"enabled"`
+	AuthStatus       string                `json:"authStatus"`
+	Refreshable      bool                  `json:"refreshable"`
+	CreatedAt        time.Time             `json:"createdAt"`
+	LatestOperation  *operationLogResponse `json:"latestOperation"`
+}
+
 type linkedAccountResponse struct {
 	ID       uint64 `json:"id,string"`
 	Provider string `json:"provider"`
@@ -427,6 +454,51 @@ func (h *Handler) list(c *gin.Context) {
 		items = append(items, newAccountResponse(value))
 	}
 	response.Success(c, http.StatusOK, gin.H{"items": items, "page": page, "pageSize": pageSize, "total": total})
+}
+
+func (h *Handler) listOperationRecords(c *gin.Context) {
+	page, pageSize := pagination(c)
+	values, total, err := h.service.ListOperationRecords(c.Request.Context(), accountapp.OperationRecordQuery{
+		Provider: accountdomain.Provider(c.Query("provider")),
+		OpType:   accountdomain.OperationType(c.Query("opType")),
+		Result:   c.Query("result"),
+		Page:     page,
+		PageSize: pageSize,
+		Search:   c.Query("search"),
+		Status:   c.Query("status"),
+		Sort:     repository.SortQuery{Field: c.Query("sortBy"), Direction: repository.SortDirection(c.Query("sortOrder"))},
+	})
+	if errors.Is(err, accountapp.ErrInvalidInput) || errors.Is(err, accountapp.ErrInvalidFilter) {
+		response.Error(c, http.StatusBadRequest, "invalidOperationRecordQuery", err.Error())
+		return
+	}
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "operationRecordListFailed", "读取账号操作记录失败")
+		return
+	}
+	items := make([]operationRecordResponse, 0, len(values))
+	for _, value := range values {
+		items = append(items, newOperationRecordResponse(value))
+	}
+	response.Success(c, http.StatusOK, gin.H{"items": items, "page": page, "pageSize": pageSize, "total": total})
+}
+
+func (h *Handler) listOperationLogs(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	opType := accountdomain.OperationType(c.Query("opType"))
+	values, err := h.service.ListOperationLogs(c.Request.Context(), id, opType)
+	if err != nil {
+		h.writeServiceError(c, "invalidOperationLogQuery", err, http.StatusInternalServerError, "读取账号操作历史失败")
+		return
+	}
+	items := make([]operationLogResponse, 0, len(values))
+	for _, value := range values {
+		items = append(items, newOperationLogResponse(value))
+	}
+	response.Success(c, http.StatusOK, gin.H{"items": items})
 }
 
 func (h *Handler) summary(c *gin.Context) {
@@ -1474,6 +1546,39 @@ func (h *Handler) refreshAllConsoleQuotas(c *gin.Context) {
 		return
 	}
 	_ = stream.Write("complete", accountBatchResponse{Succeeded: succeeded, Failed: failed})
+}
+
+func newOperationLogResponse(value accountdomain.OperationLog) operationLogResponse {
+	return operationLogResponse{
+		ID:          strconv.FormatUint(value.ID, 10),
+		OpType:      string(value.OpType),
+		Success:     value.Success,
+		StatusCode:  value.StatusCode,
+		ErrorCode:   value.ErrorCode,
+		Message:     value.Message,
+		RawResponse: value.RawResponse,
+		TriggeredBy: string(value.TriggeredBy),
+		StartedAt:   value.StartedAt,
+		FinishedAt:  value.FinishedAt,
+	}
+}
+
+func newOperationRecordResponse(value accountapp.OperationRecord) operationRecordResponse {
+	item := operationRecordResponse{
+		ID:          strconv.FormatUint(value.Account.ID, 10),
+		Provider:    string(value.Account.Provider),
+		Name:        value.Account.Name,
+		Email:       value.Account.Email,
+		Enabled:     value.Account.Enabled,
+		AuthStatus:  string(value.Account.AuthStatus),
+		Refreshable: value.Account.EncryptedRefreshToken != "",
+		CreatedAt:   value.Account.CreatedAt,
+	}
+	if value.Latest != nil {
+		log := newOperationLogResponse(*value.Latest)
+		item.LatestOperation = &log
+	}
+	return item
 }
 
 func newAccountResponse(value accountapp.View) accountResponse {

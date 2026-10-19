@@ -255,6 +255,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	accountService := accountapp.NewService(accountRepo, auditRepo, deviceSessions, sticky, providers, cipher, refreshLock)
 	cliAdapter.SetFallbackMarker(accountService)
 	accountService.SetLogger(logger)
+	accountService.SetOperationLogRepository(relational.NewAccountOperationLogRepository(database))
 	accountService.UpdateAutoCleanConfig(accountAutoCleanConfig(cfg.Accounts))
 	accountService.SetConcurrencyLimiter(concurrency)
 	accountService.SetQuotaRecoveryQueue(quotaQueue)
